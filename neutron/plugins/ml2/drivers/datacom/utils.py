@@ -1,0 +1,2 @@
+MIN_VLAN = 2
+MAX_VLAN = 1000
