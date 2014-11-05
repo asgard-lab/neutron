@@ -46,7 +46,24 @@ class ManagedXml:
         else:
             raise ValueError("No such vlan "+str(vid))  # Create proper error
 
+    def removePortsFromVlan(self, vid, ports):
+        """ This method removoes ports from an existing vlan
+        """
+
+        vlan = self.findVlan(vid)
+        if vlan:
+            vlan.ports.remove_bits(ports)
+        else:
+            raise ValueError("No such vlan "+str(vid))  # Create proper error
+
+    def as_xml(self):
+        """ This method returns the xml version of the object
+        """
+        self.tostring()
+
     def tostring(self):
+        """ An alias to as_xml()
+        """
         return self.xml.as_xml_text()
 
 if __name__ == '__main__':

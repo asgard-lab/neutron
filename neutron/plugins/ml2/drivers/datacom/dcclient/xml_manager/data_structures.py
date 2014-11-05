@@ -87,13 +87,27 @@ class Vlan_global(object):
     """
     # TODO: adicionar checagens de limites nas properties
 
-    def __init__(self, vid, name='', ports=None):
+    def __init__(self, vid, name='', ports=None, active=None):
         self.vid = vid
         if ports:
             self.ports = ports
         else:
             self.ports = Pbits(0)
         self.name = name
+        self.active = True
+
+    @property
+    def active(self):
+        return self._active
+
+    @active.setter
+    def active(self, active):
+        assert type(active) is bool
+        self._active = active
+
+    @active.deleter
+    def active(self):
+        self._active = False
 
     @property
     def name(self):
@@ -132,8 +146,8 @@ class Vlan_global(object):
         self._ports = ports
 
     @ports.deleter
-    def ports(self):
-        self.ports = None
+    def ports(self, ports):
+        del self.ports
 
     def as_xml(self):
         """ Method that returns the xml form of the object
@@ -141,7 +155,10 @@ class Vlan_global(object):
         xml = ET.Element("vlan_global")
         xml.attrib["id0"] = str(self.vid)
         ET.SubElement(xml, "vid").text = str(self.vid)
-        ET.SubElement(xml, "active").text = "1"
+        if self.active == True:
+            ET.SubElement(xml, "active").text = "1"
+        else:
+            ET.SubElement(xml, "active").text = "0"
         if self.name:
             ET.SubElement(xml, "name").text = self.name
         if self.ports:
@@ -212,6 +229,7 @@ if __name__ == '__main__':
     vlan = Vlan_global(42)
     ports = Pbits([2, 3, 6])
 
+    vlan.active = True
     vlan.ports = ports
 
     c = Cfg_data()
