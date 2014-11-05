@@ -28,10 +28,11 @@ config.setup_config()
 class DatacomDriver(api.MechanismDriver):
     """    """
     def __init__(self):
+        self.dcclient = Manager()
         pass
 
     def initialize(self):
-        self.dcclient = Manager()
+        self.dcclient.setup()
 
     def create_network_precommit(self, context):
         """Within transaction."""

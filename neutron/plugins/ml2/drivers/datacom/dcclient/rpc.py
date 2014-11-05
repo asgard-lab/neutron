@@ -26,7 +26,7 @@ class RPC:
         req = pycurl.Curl()
 
         #ignore ssl certificate verification
-        if self.method is 'https':
+        if str(self.method) == 'https':
             req.setopt(req.SSL_VERIFYPEER, 0)
             req.setopt(req.SSL_VERIFYHOST, 0)
 
