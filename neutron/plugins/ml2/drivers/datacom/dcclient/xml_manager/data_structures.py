@@ -207,7 +207,8 @@ class Cfg_data(object):
 
     @vlans.deleter
     def vlans(self):
-        self._vlans = []
+        for vlan in self.vlans:
+            del vlan.active
 
     def as_xml(self):
         xml = ET.Element("cfg_data")

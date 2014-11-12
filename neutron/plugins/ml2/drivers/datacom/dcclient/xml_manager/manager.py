@@ -36,6 +36,18 @@ class ManagedXml:
 
         return vlan
 
+    def removeVlan(self, vid):
+        """ This method revmoes a vlan on the XML if it exists.
+        """
+
+        if not self.findVlan(vid):
+            raise ValueError("Vlan does not exsits or the vid " + vid + \
+                    " is invalid")
+
+        vlan = self.findVlan(vid)
+        self.removePortsFromVlan(self, vid, vlan)
+        del vlan
+
     def addPortsToVlan(self, vid, ports):
         """ This method adds ports to an existing vlan
         """

@@ -32,9 +32,7 @@ class main_test(testtools.TestCase):
                        '</active><name>vlan_test</name>' + \
                        '<pbmp_untagged id0="0"><pbits id0="0">13</pbits>' + \
                        '</pbmp_untagged></vlan_global>'
-
         actual_xml = vlan.as_xml_text()
-
         self.assertEquals(expected_xml, actual_xml)
 
     def test_cfg_data(self):
@@ -52,3 +50,13 @@ class main_test(testtools.TestCase):
         actual_xml = cfg.as_xml_text()
 
         self.assertEquals(expected_xml, actual_xml)
+
+
+        del cfg.vlans
+        expected_xml = '<cfg_data><vlan_global id0="42"><vid>42</vid>' + \
+                       '<active>0</active><name>vlan_test</name>' + \
+                       '<pbmp_untagged id0="0"><pbits id0="0">13</pbits>' + \
+                       '</pbmp_untagged></vlan_global></cfg_data>'
+        actual_xml = cfg.as_xml_text()
+        self.assertEquals(expected_xml, actual_xml)
+
