@@ -22,6 +22,20 @@ class Pbits(object):
     def __init__(self, bits):
         self.bits = bits
 
+    def __add__(self, other):
+        if isinstance(other, Pbits):
+            self.add_bits(other.bits)
+        else:
+            self.add_bits(other)
+        return self
+
+    def __sub__(self, other):
+        if isinstance(other, Pbits):
+            self.remove_bits(other.bits)
+        else:
+            self.remove_bits(other)
+        return self
+
     @property
     def bits(self):
         return self._bits

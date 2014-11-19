@@ -15,6 +15,12 @@ class main_test(testtools.TestCase):
         list_cons.add_bits([2, 3])
         self.assertIs(15, list_cons.bits)
 
+        list_cons = list_cons+[5]
+        self.assertIs(31, list_cons.bits)
+
+        list_cons = list_cons-[5]
+        self.assertIs(15, list_cons.bits)
+
         list_cons.remove_bits([1, 4])
         self.assertIs(6, list_cons.bits)
 
