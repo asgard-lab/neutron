@@ -26,3 +26,6 @@ subunit.log
 *.mo
 *.sw?
 *~
+*trial*
+*out
+*.log
