@@ -65,3 +65,16 @@ class Manager:
             self._update()
         except:
             LOG.info("Trying to create already existing network %d:", vlan)
+
+    def update_port(self, vlan, ports):
+        """ Add new ports to vlan on the switch, if vlan exists
+        and port is not already there.
+        """
+        try:
+            for switch in ports:
+                xml = self.switches_dic[switch]['xml']
+                xml.addPortsToVlan(vlan, ports[switch])
+            self._update()
+        except:
+            LOG.info("Trying to add ports to nonexistant network %d:", vlan)
+        # needs other exception

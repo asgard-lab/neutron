@@ -24,7 +24,6 @@ from dcclient.dcclient import Manager
 import config
 config.setup_config()
 
-
 class DatacomDriver(api.MechanismDriver):
     """    """
     def __init__(self):
@@ -33,6 +32,16 @@ class DatacomDriver(api.MechanismDriver):
 
     def initialize(self):
         self.dcclient.setup()
+
+    def _find_ports(compute):
+        """Returns dictionary with the switches containing the compute, 
+        and each respective port.
+        """
+        ports = {}
+        for switch in self.dcclient.switches_dic:
+            if compute in self.dcclient.switches_dic[switch]:
+                ports[switch] = self.dcclient.switches_dic[switch][compute])
+        return ports
 
     def create_network_precommit(self, context):
         """Within transaction."""
@@ -73,7 +82,12 @@ class DatacomDriver(api.MechanismDriver):
 
     def update_port_postcommit(self, context):
         """After transaction."""
-        pass
+        if context.bound_segment is not None and \
+           str(context.bound_segment['network_type']) == "vxlan":
+            ports = _find_ports(context.host)
+            if ports:
+                vlan = int(context.bound_segment['segmentation_id'])
+                self.dcclient.update_port(vlan,ports)
 
     def delete_port_precommit(self, context):
         """Within transaction."""
