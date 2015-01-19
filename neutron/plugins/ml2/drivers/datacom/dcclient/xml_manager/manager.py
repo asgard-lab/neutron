@@ -1,7 +1,7 @@
 """ Methos to create and manipulate the XML
 """
 import data_structures
-
+import utils
 
 class ManagedXml:
     def __init__(self):
@@ -22,7 +22,7 @@ class ManagedXml:
         """
 
         if self.findVlan(vid):
-            raise ValueError("Vlan already exists "+str(vid))  # proper error
+            raise XMLVlanError("Vlan already exists "+str(vid))
 
         vlan = data_structures.Vlan_global(vid)
 
@@ -41,7 +41,7 @@ class ManagedXml:
         """
 
         if not self.findVlan(vid):
-            raise ValueError("Vlan does not exsits or the vid " + vid + \
+            raise XMLVlanError("Vlan does not exsits or the vid " + vid + \
                     " is invalid")
 
         vlan = self.findVlan(vid)
@@ -56,7 +56,7 @@ class ManagedXml:
         if vlan:
             vlan.ports.add_bits(ports)
         else:
-            raise ValueError("No such vlan "+str(vid))  # Create proper error
+            raise XMLPortError("No such vlan "+str(vid))
 
     def removePortsFromVlan(self, vid, ports):
         """ This method removoes ports from an existing vlan
@@ -66,7 +66,7 @@ class ManagedXml:
         if vlan:
             vlan.ports.remove_bits(ports)
         else:
-            raise ValueError("No such vlan "+str(vid))  # Create proper error
+            raise XMLVlanError("No such vlan "+str(vid)
 
     def as_xml(self):
         """ This method returns the xml version of the object

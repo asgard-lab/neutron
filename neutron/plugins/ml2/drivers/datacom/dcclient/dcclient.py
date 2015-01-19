@@ -3,6 +3,7 @@ creates the actual networks
 """
 
 import rpc
+from utils.py import ParsingErr
 from xml_manager.manager import ManagedXml
 
 
@@ -22,8 +23,7 @@ class Manager:
         parsed_buf = oslo_parser.read(cfg.CONF.config_file)
 
         if not len(parsed_buf) == len(cfg.CONF.config_file):
-            raise ValueError("Parsing problem")
-            # TODO :create a proper exception!
+            raise DMConfigError("Parsing problem")
 
         config = oslo_parser.parsed[0]
 
