@@ -32,7 +32,7 @@ class DatacomDriver(api.MechanismDriver):
     def initialize(self):
         self.dcclient.setup()
 
-    def _find_ports(compute):
+    def _find_ports(self, compute):
         """Returns dictionary with the switches containing the compute, 
         and each respective port.
         """
@@ -83,10 +83,11 @@ class DatacomDriver(api.MechanismDriver):
         """After transaction."""
         if context.bound_segment is not None and \
            str(context.bound_segment['network_type']) == "vxlan":
-            ports = _find_ports(context.host)
+            ports = self._find_ports(context.host)
             if ports:
                 vlan = int(context.bound_segment['segmentation_id'])
                 self.dcclient.update_port(vlan,ports)
+
 
     def delete_port_precommit(self, context):
         """Within transaction."""
