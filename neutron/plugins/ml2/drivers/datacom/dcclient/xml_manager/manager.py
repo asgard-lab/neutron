@@ -1,7 +1,7 @@
 """ Methos to create and manipulate the XML
 """
 import data_structures
-import utils
+import neutron.plugins.ml2.drivers.datacom.utils as utils
 
 class ManagedXml:
     def __init__(self):

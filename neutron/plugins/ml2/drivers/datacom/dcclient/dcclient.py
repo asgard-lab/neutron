@@ -3,7 +3,7 @@ creates the actual networks
 """
 
 import rpc
-import utils
+import neutron.plugins.ml2.drivers.utils as utils
 from xml_manager.manager import ManagedXml
 
 
