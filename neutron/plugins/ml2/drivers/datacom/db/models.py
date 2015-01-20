@@ -1,27 +1,20 @@
-from sqlalchemy import Column, String, ForeignKey
+from sqlalchemy import Column, String, ForeignKey, Integer
 from sqlalchemy.orm import relationship, backref
 
 from neutron.db.model_base import BASEV2
 from neutron.db.models_v2 import HasId
 
-
-class DatacomTenant(BASEV2, HasId):
-    """Datacom Tenant table"""
-    tenant = Column(String(50))
-
-
 class DatacomNetwork(BASEV2, HasId):
     """Each VLAN represent a Network
-    Multiple networks may be associated with a tenant
+    a network may have multiple ports
     """
-    vlan = Column(String(10))
-    tenant_id = Column(String(36), ForeignKey('datacomtenant.id'))
-    tenant = relationship('DatacomTenant', backref=backref('datacomtenants'))
-
+    vid = Column(Integer)
+    name = Column(String(30))
 
 class DatacomPort(BASEV2, HasId):
-    """Each port is connected to a network"""
-    port = Column(String(36))
+    """Each port is connected to a network
+    """
+    port = Column(Integer)
 
-    network_id = Column(String(36), ForeignKey('datacomnetwork.id'))
+    network_id = Column(String(36), ForeignKey('datacomnetworks.id'))
     network = relationship('DatacomNetwork', backref=backref('ports'))
