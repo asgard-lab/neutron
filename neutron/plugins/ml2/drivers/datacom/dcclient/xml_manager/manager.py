@@ -66,7 +66,7 @@ class ManagedXml:
         if vlan:
             vlan.ports.remove_bits(ports)
         else:
-            raise XMLVlanError("No such vlan "+str(vid)
+            raise XMLVlanError("No such vlan "+str(vid))
 
     def as_xml(self):
         """ This method returns the xml version of the object

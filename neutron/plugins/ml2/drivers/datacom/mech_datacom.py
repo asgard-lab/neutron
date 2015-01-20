@@ -13,7 +13,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-
 from oslo.config import cfg
 
 from neutron.plugins.ml2 import driver_api as api
@@ -40,7 +39,7 @@ class DatacomDriver(api.MechanismDriver):
         ports = {}
         for switch in self.dcclient.switches_dic:
             if compute in self.dcclient.switches_dic[switch]:
-                ports[switch] = self.dcclient.switches_dic[switch][compute])
+                ports[switch] = self.dcclient.switches_dic[switch][compute]
         return ports
 
     def create_network_precommit(self, context):
@@ -82,6 +81,7 @@ class DatacomDriver(api.MechanismDriver):
 
     def update_port_postcommit(self, context):
         """After transaction."""
+        import ipdb; ipdb.set_trace() # BREAKPOINT
         if context.bound_segment is not None and \
            str(context.bound_segment['network_type']) == "vxlan":
             ports = _find_ports(context.host)

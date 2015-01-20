@@ -3,7 +3,7 @@ creates the actual networks
 """
 
 import rpc
-from utils.py import ParsingErr
+import utils
 from xml_manager.manager import ManagedXml
 
 
