@@ -3,9 +3,8 @@ creates the actual networks
 """
 
 import rpc
-import neutron.plugins.ml2.drivers.dcclient.utils as utils
 from xml_manager.manager import ManagedXml
-
+import neutron.plugins.ml2.drivers.datacom.utils as utils
 
 from neutron.openstack.common import log as logger
 from oslo.config import cfg

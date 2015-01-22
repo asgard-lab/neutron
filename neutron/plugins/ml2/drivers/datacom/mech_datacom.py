@@ -16,9 +16,10 @@
 from oslo.config import cfg
 
 from neutron.plugins.ml2 import driver_api as api
+import neutron.db.api as db
 
 from dcclient.dcclient import Manager
-
+from db.models import DatacomNetwork
 
 import config
 config.setup_config()
@@ -33,7 +34,7 @@ class DatacomDriver(api.MechanismDriver):
         self.dcclient.setup()
 
     def _find_ports(self, compute):
-        """Returns dictionary with the switches containing the compute, 
+        """Returns dictionary with the switches containing the compute,
         and each respective port.
         """
         ports = {}
@@ -44,7 +45,12 @@ class DatacomDriver(api.MechanismDriver):
 
     def create_network_precommit(self, context):
         """Within transaction."""
-        pass
+        session = db.get_session()
+        with session.begin(subtransactions=True):
+            dm_network = DatacomNetwork(
+                    vid = int(context.network_segments[0]['segmentation_id']),
+                    name = context.current['name'])
+            session.add(dm_network)
 
     def create_network_postcommit(self, context):
         """After transaction is done."""
