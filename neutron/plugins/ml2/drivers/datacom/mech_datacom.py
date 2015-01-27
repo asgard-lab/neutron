@@ -87,12 +87,13 @@ class DatacomDriver(api.MechanismDriver):
 
     def update_port_postcommit(self, context):
         """After transaction."""
-        if context.bound_segment is not None and \
-           str(context.bound_segment['network_type']) == "vxlan":
-            ports = self._find_ports(context.host)
-            if ports:
-                vlan = int(context.bound_segment['segmentation_id'])
-                self.dcclient.update_port(vlan,ports)
+        pass
+#         if context.bound_segment is not None and \
+#            str(context.bound_segment['network_type']) == "vxlan":
+#             ports = self._find_ports(context.host)
+#             if ports:
+#                 vlan = int(context.bound_segment['segmentation_id'])
+#                 self.dcclient.update_port(vlan,ports)
 
 
     def delete_port_precommit(self, context):

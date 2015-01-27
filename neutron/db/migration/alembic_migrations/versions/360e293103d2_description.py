@@ -26,17 +26,17 @@ import sqlalchemy as sa
 def upgrade():
     op.create_table(
         'datacomnetwork',
-        sa.Column('id', sa.String(length=36), nullable=False),
-        sa.Column('vid', sa.Integer(), nullable=False),
+        sa.Column('vid', sa.Integer(), nullable=False, autoincrement=False),
         sa.Column('name', sa.String(length=30), nullable=True),
-        sa.PrimaryKeyConstraint('id'))
+        sa.PrimaryKeyConstraint('vid'))
 
     op.create_table(
         'datacomport',
         sa.Column('id', sa.String(length=36), nullable=False),
-        sa.Column('network_id', sa.String(length=36), nullable=False),
-        sa.Column('port', sa.Integer(), nullable=True),
-        sa.ForeignKeyConstraint(['network_id'], ['datacomnetwork.id'], ),
+        sa.Column('network_id', sa.Integer(), nullable=False, 
+            autoincrement=False),
+        sa.Column('port', sa.Integer(), nullable=True, autoincrement=False),
+        sa.ForeignKeyConstraint(['network_id'], ['datacomnetwork.vid'], ),
         sa.PrimaryKeyConstraint('id'))
 
 
