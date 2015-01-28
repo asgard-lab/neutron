@@ -19,7 +19,8 @@ from neutron.plugins.ml2 import driver_api as api
 import neutron.db.api as db
 
 from dcclient.dcclient import Manager
-from db.models import DatacomNetwork
+from dcclient.xml_manager.data_structures import Pbits
+from db.models import DatacomNetwork, DatacomPort
 
 import config
 config.setup_config()
@@ -38,17 +39,37 @@ class DatacomDriver(api.MechanismDriver):
         and each respective port.
         """
         ports = {}
-        for switch in self.dcclient.switches_dic:
-            if compute in self.dcclient.switches_dic[switch]:
-                ports[switch] = self.dcclient.switches_dic[switch][compute]
+        switches_dic = self.dcclient.switches_dic
+        for switch in switches_dic:
+            if compute in switches_dic[switch]:
+                if switch not in ports:
+                    ports[switch] = [switches_dic[switch][compute]]
+                else:
+                    ports[switch].append(switches_dic[switch][compute])
         return ports
+
+    def _add_ports_to_db(self, ports, context):
+        vlan = int(context.bound_segment['segmentation_id'])
+        session = db.get_session()
+        with session.begin(subtransactions=True):
+            vlan =  context.network.network_segments[0]['segmentation_id']
+            query = session.query(DatacomNetwork)
+            resultset = query.filter(DatacomNetwork.vlan == vlan)
+            dcnetwork = resultset.first()
+            for ip in ports:
+                for port in ports[ip]:
+                    dcport = DatacomPort(network = dcnetwork,
+                                         switch = ip,
+                                         interface = port)
+                    session.add(dcport)
+
 
     def create_network_precommit(self, context):
         """Within transaction."""
         session = db.get_session()
         with session.begin(subtransactions=True):
             dm_network = DatacomNetwork(
-                    vid = int(context.network_segments[0]['segmentation_id']),
+                    vlan = int(context.network_segments[0]['segmentation_id']),
                     name = context.current['name'])
             session.add(dm_network)
 
@@ -83,17 +104,15 @@ class DatacomDriver(api.MechanismDriver):
 
     def update_port_precommit(self, context):
         """Within transaction."""
-        pass
+        if context.bound_segment is not None and \
+           str(context.bound_segment['network_type']) == "vxlan":
+            ports = self._find_ports(context.host)
+            if ports:
+                self._add_ports_to_db(ports, context)
 
     def update_port_postcommit(self, context):
         """After transaction."""
         pass
-#         if context.bound_segment is not None and \
-#            str(context.bound_segment['network_type']) == "vxlan":
-#             ports = self._find_ports(context.host)
-#             if ports:
-#                 vlan = int(context.bound_segment['segmentation_id'])
-#                 self.dcclient.update_port(vlan,ports)
 
 
     def delete_port_precommit(self, context):

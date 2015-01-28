@@ -11,15 +11,18 @@ class DatacomNetwork(BASEV2, HasId):
     """
     __tablename__ = "datacomnetwork"
 
-    vid = Column(Integer)
+    vlan = Column(Integer)
     name = Column(String(30))
 
 class DatacomPort(BASEV2, HasId):
     """Each port is connected to a network
     """
     __tablename__ = "datacomport"
-
-    port = Column(Integer)
+    """TODO: create a table interface wich holds interface and ip and only
+       create relation between port and this interface
+    """
+    switch = Column(String(36))
+    interface = Column(Integer)
 
     network_id = Column(String(36), ForeignKey('datacomnetwork.id'))
     network = relationship('DatacomNetwork', backref=backref('ports'))

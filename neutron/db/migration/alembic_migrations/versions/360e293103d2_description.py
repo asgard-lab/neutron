@@ -26,20 +26,22 @@ import sqlalchemy as sa
 def upgrade():
     op.create_table(
         'datacomnetwork',
-        sa.Column('vid', sa.Integer(), nullable=False, autoincrement=False),
+        sa.Column('id', sa.String(length=36), nullable=False),
+        sa.Column('vlan', sa.Integer(), nullable=False, autoincrement=False),
         sa.Column('name', sa.String(length=30), nullable=True),
-        sa.PrimaryKeyConstraint('vid'))
+        sa.Column('ports', sa.Integer(), nullable=True, autoincrement=False),
+        sa.PrimaryKeyConstraint('id'))
 
     op.create_table(
         'datacomport',
         sa.Column('id', sa.String(length=36), nullable=False),
-        sa.Column('network_id', sa.Integer(), nullable=False, 
+        sa.Column('network_id', sa.String(length=36), nullable=False, 
             autoincrement=False),
-        sa.Column('port', sa.Integer(), nullable=True, autoincrement=False),
-        sa.ForeignKeyConstraint(['network_id'], ['datacomnetwork.vid'], ),
+        sa.Column('interface', sa.Integer(), nullable=False,
+            autoincrement=False),
+        sa.Column('switch', sa.String(length=36), nullable=False),
+        sa.ForeignKeyConstraint(['network_id'], ['datacomnetwork.id'] ),
         sa.PrimaryKeyConstraint('id'))
 
-
 def downgrade():
-    op.drop_table('datacomport')
     op.drop_table('datacomnetwork')
