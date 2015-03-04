@@ -12,7 +12,6 @@
 # implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
 from oslo.config import cfg
 
 from neutron.plugins.ml2 import driver_api as api
@@ -33,6 +32,10 @@ class DatacomDriver(api.MechanismDriver):
 
     def initialize(self):
         self.dcclient.setup()
+        session = db.get_session()
+        for vlan,name in session.query(DatacomNetwork.vlan,
+                                       DatacomNetwork.name).all():
+            self.dcclient.create_network(int(vlan), str(name))
 
     def _find_ports(self, compute):
         """Returns dictionary with the switches containing the compute,
@@ -58,9 +61,10 @@ class DatacomDriver(api.MechanismDriver):
             dcnetwork = resultset.first()
             for ip in ports:
                 for port in ports[ip]:
-                    dcport = DatacomPort(network = dcnetwork,
+                    dcport = DatacomPort(network_id = dcnetwork.id,
                                          switch = ip,
-                                         interface = port)
+                                         interface = port,
+                                         neutron_port_id = context.current['id'])
                     session.add(dcport)
 
 
@@ -105,15 +109,28 @@ class DatacomDriver(api.MechanismDriver):
     def update_port_precommit(self, context):
         """Within transaction."""
         if context.bound_segment is not None and \
-           str(context.bound_segment['network_type']) == "vxlan":
+           str(context.bound_segment['network_type']) == "vxlan" and \
+           context.current['device_owner'].startswith('compute'):
             ports = self._find_ports(context.host)
             if ports:
                 self._add_ports_to_db(ports, context)
 
     def update_port_postcommit(self, context):
         """After transaction."""
-        pass
+        session = db.get_session()
+        switches_dic = self.dcclient.switches_dic
+        vlan = int(context.network.network_segments[0]['segmentation_id'])
+        query = session.query(DatacomPort.switch, DatacomPort.interface)
+        r_set = query.filter_by(neutron_port_id = context.current['id']).all()
+        update_interfaces = {}
 
+        for switch, interface in r_set:
+            switch = str(switch)
+            interface = int(interface)
+            if switch not in update_interfaces: update_interfaces[switch] = []
+            update_interfaces[switch].append(interface)
+
+        self.dcclient.update_port(vlan, update_interfaces)
 
     def delete_port_precommit(self, context):
         """Within transaction."""

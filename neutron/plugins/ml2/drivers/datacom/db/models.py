@@ -26,3 +26,5 @@ class DatacomPort(BASEV2, HasId):
 
     network_id = Column(String(36), ForeignKey('datacomnetwork.id'))
     network = relationship('DatacomNetwork', backref=backref('ports'))
+
+    neutron_port_id = Column(String(36))

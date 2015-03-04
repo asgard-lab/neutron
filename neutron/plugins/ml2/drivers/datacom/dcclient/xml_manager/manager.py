@@ -71,7 +71,7 @@ class ManagedXml:
     def as_xml(self):
         """ This method returns the xml version of the object
         """
-        self.tostring()
+        return self.tostring()
 
     def tostring(self):
         """ An alias to as_xml()
@@ -80,6 +80,9 @@ class ManagedXml:
 
 if __name__ == '__main__':
     xml = ManagedXml()
-    vlan = xml.addVlan(42, name='aaa', ports=[1, 3, 4])
+    vlan = xml.addVlan(42, name='aaa')
 
     xml.addPortsToVlan(42, [2])
+
+    from dcclient.rpc import RPC
+    switch = RPC('admin', 'admin', '192.168.0.11', 'http')

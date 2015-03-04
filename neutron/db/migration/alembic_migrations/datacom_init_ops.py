@@ -39,4 +39,5 @@ def upgrade():
         sa.PrimaryKeyConstraint('id'))
 
 def downgrade():
+    op.drop_table('datacomport')
     op.drop_table('datacomnetwork')
