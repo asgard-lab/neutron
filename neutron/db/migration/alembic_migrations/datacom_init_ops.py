@@ -24,13 +24,14 @@ def upgrade():
         sa.Column('id', sa.String(length=36), nullable=False),
         sa.Column('vlan', sa.Integer(), nullable=False, autoincrement=False),
         sa.Column('name', sa.String(length=30), nullable=True),
-        sa.Column('ports', sa.Integer(), nullable=True, autoincrement=False),
         sa.PrimaryKeyConstraint('id'))
 
     op.create_table(
         'datacomport',
         sa.Column('id', sa.String(length=36), nullable=False),
         sa.Column('network_id', sa.String(length=36), nullable=False, 
+            autoincrement=False),
+        sa.Column('neutron_port_id', sa.String(length=36),
             autoincrement=False),
         sa.Column('interface', sa.Integer(), nullable=False,
             autoincrement=False),

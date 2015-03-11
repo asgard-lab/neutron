@@ -22,9 +22,8 @@ class DatacomPort(BASEV2, HasId):
        create relation between port and this interface
     """
     switch = Column(String(36))
+    neutron_port_id = Column(String(36))
     interface = Column(Integer)
 
     network_id = Column(String(36), ForeignKey('datacomnetwork.id'))
     network = relationship('DatacomNetwork', backref=backref('ports'))
-
-    neutron_port_id = Column(String(36))
