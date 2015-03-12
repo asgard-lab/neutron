@@ -15,7 +15,7 @@ class RPC:
         self.method = method
 
     def _create_url(self):
-        """ Internal method that returns the switches' URLs given the cfg 
+        """ Internal method that returns the switches' URLs given the cfg
         attributes.
         """
         return self.method+'://'+self.host+\
@@ -40,7 +40,7 @@ class RPC:
                   ('running_part', '1'),
                   ('file_to_upload', ('file_to_upload',
                                       run_data,
-                                      'application/octet-stream'))
+                                      'application/octet-stream')))
         m = MultipartEncoder(fields=fields, boundary='-----boundary-----')
         r = requests.post(url=url,
                           data=m,
