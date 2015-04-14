@@ -65,6 +65,18 @@ class Manager:
         except:
             LOG.info("Trying to create already existing network %d:", vlan)
 
+    def delete_network(self, vlan):
+        """ Delete a network on the switch, if it exsists
+            Actually just sets it to inactive
+        """
+        try:
+            for switch in self.switches_dic:
+                xml = self.switches_dic[switch]['xml']
+                xml.removeVlan(vlan)
+            self._update()
+        except:
+            LOG.info("Trying to delet inexisting vlan: %d", vlan)
+
     def update_port(self, vlan, ports):
         """ Add new ports to vlan on the switch, if vlan exists
         and port is not already there.
@@ -76,4 +88,16 @@ class Manager:
             self._update()
         except:
             LOG.info("Trying to add ports to nonexistant network %d:", vlan)
+        # needs other exception
+
+    def delete_port(self, vlan, ports):
+        """ Delete not used ports from switch
+        """
+        try:
+            for switch in ports:
+                xml = self.switches_dic[switch]['xml']
+                xml.removePortsFronVlan(vlan, ports[switch])
+            self._update()
+        except:
+            LOG.info("Trying to remove ports from nonexistant network %d:", vlan)
         # needs other exception

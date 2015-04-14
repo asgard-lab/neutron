@@ -45,8 +45,7 @@ class ManagedXml:
                     " is invalid")
 
         vlan = self.findVlan(vid)
-        self.removePortsFromVlan(self, vid, vlan)
-        del vlan
+        del vlan.active
 
     def addPortsToVlan(self, vid, ports):
         """ This method adds ports to an existing vlan
