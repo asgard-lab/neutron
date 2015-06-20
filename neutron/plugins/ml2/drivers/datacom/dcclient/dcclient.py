@@ -22,14 +22,14 @@ class Manager:
         parsed_buf = oslo_parser.read(cfg.CONF.config_file)
 
         if not len(parsed_buf) == len(cfg.CONF.config_file):
-            raise DMConfigError("Parsing problem")
+            raise utils.DMConfigError("Parsing problem")
 
         config = oslo_parser.parsed[0]
 
         # get each switch from config file
         switches = [i for i in config if str(i) != 'ml2_datacom']
 
-        # create the actualy dictionary
+        # create the actual dictionary
         for switch in switches:
             sw_dic = config[switch]
             # each field is a list, when it should be a value
