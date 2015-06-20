@@ -22,7 +22,7 @@ class ManagedXml:
         """
 
         if self.findVlan(vid):
-            raise XMLVlanError("Vlan already exists "+str(vid))
+            raise utils.XMLVlanError("Vlan already exists "+str(vid))
 
         vlan = data_structures.Vlan_global(vid)
 
@@ -41,8 +41,8 @@ class ManagedXml:
         """
 
         if not self.findVlan(vid):
-            raise XMLVlanError("Vlan does not exsits or the vid " + vid + \
-                    " is invalid")
+            raise utils.XMLVlanError("Vlan does not exsits or the vid " + \
+                    str(vid) + " is invalid")
 
         vlan = self.findVlan(vid)
         del vlan.active
@@ -55,7 +55,7 @@ class ManagedXml:
         if vlan:
             vlan.ports.add_bits(ports)
         else:
-            raise XMLPortError("No such vlan "+str(vid))
+            raise utils.XMLPortError("No such vlan "+str(vid))
 
     def removePortsFromVlan(self, vid, ports):
         """ This method removoes ports from an existing vlan
@@ -65,7 +65,7 @@ class ManagedXml:
         if vlan:
             vlan.ports.remove_bits(ports)
         else:
-            raise XMLVlanError("No such vlan "+str(vid))
+            raise utils.XMLVlanError("No such vlan "+str(vid))
 
     def as_xml(self):
         """ This method returns the xml version of the object
