@@ -75,7 +75,7 @@ class Manager:
                 xml.removeVlan(vlan)
             self._update()
         except:
-            LOG.info("Trying to delet inexisting vlan: %d", vlan)
+            LOG.info("Trying to delete inexisting vlan: %d", vlan)
 
     def update_port(self, vlan, ports):
         """ Add new ports to vlan on the switch, if vlan exists
@@ -96,7 +96,7 @@ class Manager:
         try:
             for switch in ports:
                 xml = self.switches_dic[switch]['xml']
-                xml.removePortsFronVlan(vlan, ports[switch])
+                xml.removePortsFromVlan(vlan, ports[switch])
             self._update()
         except:
             LOG.info("Trying to remove ports from nonexistant network %d:", vlan)
