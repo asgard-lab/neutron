@@ -57,13 +57,28 @@ class Manager:
     def create_network(self, vlan, name=''):
         """ Creates a new network on the switch, if it does not exist already.
         """
+        self._create_network_xml(vlan, name)
+        self._update()
+
+    def _create_network_xml(self, vlan, name=''):
+        """ Configures the xml for a new network.
+        """
         try:
             for switch in self.switches_dic:
                 xml = self.switches_dic[switch]['xml']
                 xml.addVlan(vlan, name=name)
-            self._update()
         except:
             LOG.info("Trying to create already existing network %d:", vlan)
+
+    def create_network_bulk(self, networks, interfaces={}):
+        """ Creates multiple networks on the switch, also creating the ports
+            associated.
+        """
+        for vlan, name in networks:
+            self._create_network_xml(vlan, name)
+            if vlan in interfaces:
+                self._update_port_xml(vlan, interfaces[vlan])
+        self._update()
 
     def delete_network(self, vlan):
         """ Delete a network on the switch, if it exsists
@@ -81,14 +96,19 @@ class Manager:
         """ Add new ports to vlan on the switch, if vlan exists
         and port is not already there.
         """
+        self._update_port_xml(vlan, ports)
+        self._update()
+        # needs other exception
+
+    def _update_port_xml(self, vlan, ports):
+        """ Configures the xml to the port-updating process
+        """
         try:
             for switch in ports:
                 xml = self.switches_dic[switch]['xml']
                 xml.addPortsToVlan(vlan, ports[switch])
-            self._update()
         except:
             LOG.info("Trying to add ports to nonexistant network %d:", vlan)
-        # needs other exception
 
     def delete_port(self, vlan, ports):
         """ Delete not used ports from switch

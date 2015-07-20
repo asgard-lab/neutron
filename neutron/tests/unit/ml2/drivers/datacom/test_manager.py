@@ -61,31 +61,31 @@ class main_test(testtools.TestCase):
         self.assertEquals(expected_xml, xml.as_xml())
 
 	    # tests if non existent vlan is added correctly given vid and name
-        xml = mg.ManagedXml()
-        xml.addVlan(42, name='vlan_test')
-        expected_xml = '<cfg_data><vlan_global id0="42"><vid>42</vid>' + \
+    	xml = mg.ManagedXml()
+    	xml.addVlan(42, name='vlan_test')
+    	expected_xml = '<cfg_data><vlan_global id0="42"><vid>42</vid>' + \
                        '<active>1</active><name>vlan_test</name>' + \
                        '<pbmp_untagged id0="0"><pbits id0="0">0</pbits>' + \
                        '</pbmp_untagged></vlan_global></cfg_data>'
-        self.assertEquals(expected_xml, xml.as_xml())
+    	self.assertEquals(expected_xml, xml.as_xml())
 
-        # tests if non existent vlan is added correclty given vid and ports
-        xml = mg.ManagedXml()
-        xml.addVlan(42, ports=[1,5,9])
+	    # tests if non existent vlan is added correclty given vid and ports
+    	xml = mg.ManagedXml()
+    	xml.addVlan(42, ports=[1,5,9])
         expected_xml = '<cfg_data><vlan_global id0="42"><vid>42</vid>' + \
                        '<active>1</active><pbmp_untagged id0="0">' + \
                        '<pbits id0="0">273</pbits></pbmp_untagged>' + \
                        '</vlan_global></cfg_data>'
         self.assertEquals(expected_xml, xml.as_xml())
 
-        # tests if non existent vlan is added correctly given vid, name and ports
-        xml = mg.ManagedXml()
-        xml.addVlan(42, name='vlan_test', ports=[1,5,9])
+    	# tests if non existent vlan is added correctly given vid, name and ports
+    	xml = mg.ManagedXml()
+    	xml.addVlan(42, name='vlan_test', ports=[1,5,9])
         expected_xml = '<cfg_data><vlan_global id0="42"><vid>42</vid>' + \
                        '<active>1</active><name>vlan_test</name>' + \
                        '<pbmp_untagged id0="0"><pbits id0="0">273</pbits>' + \
                        '</pbmp_untagged></vlan_global></cfg_data>'
-        self.assertEquals(expected_xml, xml.as_xml())
+    	self.assertEquals(expected_xml, xml.as_xml())
 
     def test_removeVlan(self):
         # tests if an exception is raised if a non existent Vlan is attempted

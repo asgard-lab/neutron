@@ -61,6 +61,7 @@ class main_test(testtools.TestCase):
     def test_setup(self, mockedparser):
         # setting up what the mocked method should return
         mockedparser.return_value.read.return_value = ''
+        cfg.CONF.config_file = '2'
         test_manager = dc.Manager()
 
         # tests if the right error is raised, when the parser return

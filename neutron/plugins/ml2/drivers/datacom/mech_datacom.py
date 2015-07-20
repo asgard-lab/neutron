@@ -28,14 +28,30 @@ class DatacomDriver(api.MechanismDriver):
     """    """
     def __init__(self):
         self.dcclient = Manager()
-        pass
 
     def initialize(self):
         self.dcclient.setup()
         session = db.get_session()
-        for vlan,name in session.query(DatacomNetwork.vlan,
-                                       DatacomNetwork.name).all():
-            self.dcclient.create_network(int(vlan), str(name))
+        networks = session.query(DatacomNetwork.vlan,
+                                 DatacomNetwork.name).all()
+
+        ports = session.query(DatacomPort.switch,
+                              DatacomPort.interface,
+                              DatacomNetwork.vlan).all()
+
+        interfaces = {}
+
+        # first set up the dictionary with each port list
+        for port in ports:
+            if port[2] not in interfaces: interfaces[port[2]] = []
+            interfaces[port[2]].append(port[:2])
+
+        # now transform each port list into a dictionary, so the dcclient
+        # can understand it.
+        for vlan in interfaces:
+            interfaces[vlan] = self._ports_to_dict(interfaces[vlan])
+
+        self.dcclient.create_network_bulk(networks, interfaces=interfaces)
 
     def _find_ports(self, compute):
         """Returns dictionary with the switches containing the compute,
@@ -122,6 +138,21 @@ class DatacomDriver(api.MechanismDriver):
             if ports:
                 self._add_ports_to_db(ports, context)
 
+    def _ports_to_dict(self, port_list):
+        """ takes a list of ports and returns a dictionary containing the
+        dictionary in a way dcclient understands.
+        """
+        update_interfaces = {}
+
+        for switch, interface in port_list:
+            switch = str(switch)
+            interface = int(interface)
+            if switch not in update_interfaces: update_interfaces[switch] = []
+            update_interfaces[switch].append(interface)
+
+        return update_interfaces
+
+
     def update_port_postcommit(self, context):
         """After transaction."""
         session = db.get_session()
@@ -129,15 +160,10 @@ class DatacomDriver(api.MechanismDriver):
         vlan = int(context.network.network_segments[0]['segmentation_id'])
         query = session.query(DatacomPort.switch, DatacomPort.interface)
         r_set = query.filter_by(neutron_port_id = context.current['id']).all()
-        update_interfaces = {}
 
-        for switch, interface in r_set:
-            switch = str(switch)
-            interface = int(interface)
-            if switch not in update_interfaces: update_interfaces[switch] = []
-            update_interfaces[switch].append(interface)
+        interfaces = self._ports_to_dict(r_set)
 
-        self.dcclient.update_port(vlan, update_interfaces)
+        self.dcclient.update_port(vlan, interfaces)
 
     def delete_port_precommit(self, context):
         """Within transaction."""

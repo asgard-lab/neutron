@@ -1,5 +1,6 @@
 import testtools
 import neutron.plugins.ml2.drivers.datacom.mech_datacom as mech_datacom
+import neutron.plugins.ml2.drivers.datacom.dcclient as dcclient
 from oslo.config import cfg
 import mock
 from neutron.db import model_base
@@ -18,12 +19,20 @@ class mocked_context:
     network_segments = [{'segmentation_id':20}]
     current = {'name':'test'}
 
-def add_network(session, vlan, name):
+def add_network(session, vlan, name=''):
     dm_network = DatacomNetwork(vlan=vlan, name=name)
     session.add(dm_network)
+    return dm_network
+
+def _create_port_db(vlan, network, port_list, session):
+    for switch, neutron_port_id, interface in port_list:
+        session.add(DatacomPort(switch=switch,
+                                neutron_port_id=neutron_port_id,
+                                interface=interface,
+                                network=network))
 
 # db decorator, creates the local engine and starts db
-def uses_db(networks=[], ports=[]):
+def uses_db(networks=[], ports={}):
     def wrapp_func(func):
         def func_with_db(*args, **kwargs):
             engine = create_engine('sqlite:///:memory:')
@@ -32,16 +41,43 @@ def uses_db(networks=[], ports=[]):
             model_base.BASEV2.metadata.create_all(engine)
             ses = session()
             if (networks):
-                for vlan,name in networks:
-                    add_network(ses, vlan, name)
+                for vlan, name in networks:
+                    network = add_network(ses, vlan, name)
+                    if vlan in ports:
+                        _create_port_db(vlan, network, ports[vlan], ses)
+
+            ses.commit()
             ses.close()
+            old_session = db.get_session
             db.get_session = session
             func(*args, **kwargs)
+            db.get_session = old_session
             del engine
         return func_with_db
     return wrapp_func
 
 class main_test(testtools.TestCase):
+
+    @uses_db([(20, 'test1'),
+             (24, 'test2')],
+             {20:[('0.0.0.0', 'neutron_port_id', 1)]})
+    def test_initialize(self):
+        manager_class = dcclient.dcclient.Manager
+        manager_class._create_network_xml = mock.Mock()
+        manager_class._update_port_xml = mock.Mock()
+        manager_class._update = mock.Mock()
+
+        driver = mech_datacom.DatacomDriver()
+
+        driver.initialize()
+
+        manager_class._update.assert_called_once()
+        self.assertEquals(2, manager_class._create_network_xml.call_count)
+        manager_class._update_port_xml.assert_called_once()
+        first_call = manager_class._create_network_xml.call_args_list[0][0]
+        self.assertEquals((20, 'test1'), first_call)
+        second_call = manager_class._create_network_xml.call_args_list[1][0]
+        self.assertEquals((24, 'test2'), second_call)
 
     @uses_db()
     def test_create_network_precommit(self):
