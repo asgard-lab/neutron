@@ -193,17 +193,17 @@ class DatacomDriver(api.MechanismDriver):
             delete_interfaces = {}
             if ports:
                 session = db.get_session()
-                with session.begin(subtransactions=True):
-                    for ip in ports:
-                        for port in ports[ip]:
-                            query = session.query(DatacomPort)
-                            resultset = query.filter_by(switch = ip,
-                                                    interface = int(port.split("/")[1]),
-                                                    neutron_port_id = context.current['id'])
-                            dcport = resultset.first()
-                            if not dcport:
-                                vlan = int(context.network.network_segments[0]['segmentation_id'])
-                                switch = str(ip)
-                                interface = int(port.split("/")[1])
-                                delete_interfaces[switch].append(interface)
-                                self.dcclient.delete_port(vlan, update_interfaces)
+                for ip in ports:
+                    for port in ports[ip]:
+                        query = session.query(DatacomPort)
+                        resultset = query.filter_by(switch = ip,
+                                                interface = int(port.split("/")[1]),
+                                                neutron_port_id = context.current['id'])
+                        dcport = resultset.first()
+                        if not dcport:
+                            vlan = int(context.network.network_segments[0]['segmentation_id'])
+                            switch = str(ip)
+                            interface = int(port.split("/")[1])
+                            if switch not in delete_interfaces: delete_interfaces[switch] = []
+                            delete_interfaces[switch].append(interface)
+                self.dcclient.delete_port(vlan, delete_interfaces)

@@ -15,9 +15,16 @@ from neutron.plugins.ml2.drivers.datacom.db.models import\
 
 cfg.CONF.config_file = ''
 cfg.MultiConfigParser = mock.Mock()
+
 class mocked_context:
     network_segments = [{'segmentation_id':20}]
     current = {'name':'test'}
+
+class mocked_port_context:
+    network = mocked_context()
+    bound_segment = {'network_type': 'vxlan', 'segmentation_id':20}
+    current = {'device_owner': 'compute1', 'id': 'neutron_port_id'}
+    host = 'compute1'
 
 def add_network(session, vlan, name=''):
     dm_network = DatacomNetwork(vlan=vlan, name=name)
@@ -68,6 +75,7 @@ class main_test(testtools.TestCase):
         manager_class._update = mock.Mock()
 
         driver = mech_datacom.DatacomDriver()
+        driver.dcclient = etc.base_manager(cfg.MultiConfigParser)
 
         driver.initialize()
 
@@ -91,10 +99,77 @@ class main_test(testtools.TestCase):
 
     def test_create_network_postcommit(self):
         context = mocked_context()
-        vlan = int(context.network_segments[0]['segmentation_id'])
         driver = mech_datacom.DatacomDriver()
         driver.dcclient = etc.base_manager(cfg.MultiConfigParser)
         driver.dcclient.create_network = mock.Mock()
         driver.create_network_postcommit(context)
         driver.dcclient.create_network.assertCalledOnceWith(20,'test')
+
+    @uses_db([(20, 'test1')])
+    def test_delete_network_precommit(self):
+        context = mocked_context()
+        driver = mech_datacom.DatacomDriver()
+        driver.dcclient = etc.base_manager(cfg.MultiConfigParser)
+        driver.dcclient.setup()
+        session = db.get_session()
+        driver.delete_network_precommit(context)
+        query = session.query(DatacomNetwork)
+        self.assertEquals(0, query.count())
+
+    def test_delete_network_postcommit(self):
+        context = mocked_context()
+        driver = mech_datacom.DatacomDriver()
+        driver.dcclient = etc.base_manager(cfg.MultiConfigParser)
+        driver.dcclient.delete_network = mock.Mock()
+        driver.delete_network_postcommit(context)
+        driver.dcclient.delete_network.assertCalledOnceWith(20)
+
+    @uses_db([(20, 'test1')])
+    def test_update_port_precommit(self):
+        context = mocked_port_context()
+        driver = mech_datacom.DatacomDriver()
+        driver.dcclient = etc.base_manager(cfg.MultiConfigParser)
+        driver.dcclient.setup()
+        session = db.get_session()
+        driver.update_port_precommit(context)
+        ports = session.query(DatacomPort.interface, DatacomNetwork.vlan).all()
+        self.assertIn((1,20), ports)
+        self.assertIn((2,20), ports)
+
+    @uses_db([(20, 'test1')],
+             {20:[('192.160.0.2', 'neutron_port_id', 1),
+                  ('192.160.0.1', 'neutron_port_id', 2)]})
+    def test_update_port_postcommit(self):
+        context = mocked_port_context()
+        driver = mech_datacom.DatacomDriver()
+        driver.dcclient = etc.base_manager(cfg.MultiConfigParser)
+        driver.dcclient.setup()
+        driver.dcclient.update_port = mock.Mock()
+        driver.update_port_postcommit(context)
+        expected_dict = {'192.160.0.1': [1], '192.160.0.2': [2]}
+        driver.dcclient.update_port.assertCalledOnceWith(20, expected_dict)
+
+    @uses_db([(20, 'test1')],
+             {20:[('192.160.0.2', 'neutron_port_id', 1),
+                  ('192.160.0.1', 'neutron_port_id', 2)]})
+    def test_delete_port_precommit(self):
+        context = mocked_port_context()
+        driver = mech_datacom.DatacomDriver()
+        driver.dcclient = etc.base_manager(cfg.MultiConfigParser)
+        driver.dcclient.setup()
+        driver.delete_port_precommit(context)
+        session = db.get_session()
+        query = session.query(DatacomPort)
+        self.assertEquals(0, len(query.all()))
+
+    @uses_db()
+    def test_delete_port_postcommit(self):
+        context = mocked_port_context()
+        driver = mech_datacom.DatacomDriver()
+        driver.dcclient = etc.base_manager(cfg.MultiConfigParser)
+        driver.dcclient.setup()
+        driver.delete_port_postcommit(context)
+        driver.dcclient.delete_port = mock.Mock()
+        expected_dict = {'192.160.0.1': [1], '192.160.0.2': [2]}
+        driver.dcclient.delete_port.assertCalledOnceWith(20, expected_dict)
 

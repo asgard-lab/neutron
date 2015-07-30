@@ -34,7 +34,8 @@ class Manager:
             sw_dic = config[switch]
             # each field is a list, when it should be a value
             for i in sw_dic:
-                sw_dic[i] = sw_dic[i][0]
+                if i.startswith('dm'):
+                    sw_dic[i] = sw_dic[i][0]
 
             # get each global configuration, when not mentioned in the specific
             for field in cfg.CONF.ml2_datacom:

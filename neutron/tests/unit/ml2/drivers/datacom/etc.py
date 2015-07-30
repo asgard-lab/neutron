@@ -5,12 +5,14 @@ def base_manager(mockedparser):
         config_dict = {'192.160.0.1':
                             {'dm_username':['admin'],
                              'dm_password':['admin'],
-                             'dm_method':['http']
+                             'dm_method':['http'],
+                             'compute1':'1/2'
                             },
                        '192.160.0.2':
                             {'dm_username':['admin'],
                              'dm_password':['admin'],
-                             'dm_method':['http']
+                             'dm_method':['http'],
+                             'compute1':'1/1'
                             }
                       }
 
