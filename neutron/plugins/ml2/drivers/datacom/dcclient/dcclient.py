@@ -1,3 +1,18 @@
+# Copyright (c) 2013 OpenStack Foundation
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#    http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or
+# implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """ Main class from dcclient. Manages XML interaction, as well as switch and
 creates the actual networks
 """
@@ -9,8 +24,8 @@ import neutron.plugins.ml2.drivers.datacom.utils as utils
 from neutron.openstack.common import log as logger
 from oslo.config import cfg
 
-
 LOG = logger.getLogger(__name__)
+
 
 class Manager:
     def __init__(self):
@@ -39,7 +54,7 @@ class Manager:
 
             # get each global configuration, when not mentioned in the specific
             for field in cfg.CONF.ml2_datacom:
-                if not field in sw_dic:
+                if field not in sw_dic:
                     sw_dic[field] = cfg.CONF.ml2_datacom[field]
 
             sw_dic['rpc'] = rpc.RPC(str(sw_dic['dm_username']),
@@ -67,7 +82,7 @@ class Manager:
         try:
             for switch in self.switches_dic:
                 xml = self.switches_dic[switch]['xml']
-                xml.addVlan(vlan, name=name)
+                xml.add_vlan(vlan, name=name)
         except:
             LOG.info("Trying to create already existing network %d:", vlan)
 
@@ -88,7 +103,7 @@ class Manager:
         try:
             for switch in self.switches_dic:
                 xml = self.switches_dic[switch]['xml']
-                xml.removeVlan(vlan)
+                xml.remove_vlan(vlan)
             self._update()
         except:
             LOG.info("Trying to delete inexisting vlan: %d", vlan)
@@ -107,7 +122,7 @@ class Manager:
         try:
             for switch in ports:
                 xml = self.switches_dic[switch]['xml']
-                xml.addPortsToVlan(vlan, ports[switch])
+                xml.add_ports_to_vlan(vlan, ports[switch])
         except:
             LOG.info("Trying to add ports to nonexistant network %d:", vlan)
 
@@ -117,7 +132,7 @@ class Manager:
         try:
             for switch in ports:
                 xml = self.switches_dic[switch]['xml']
-                xml.removePortsFromVlan(vlan, ports[switch])
+                xml.remove_ports_from_vlan(vlan, ports[switch])
             self._update()
         except:
             LOG.info("Trying to remove ports from nonexistant network %d:", vlan)

@@ -1,13 +1,29 @@
-""" Methos to create and manipulate the XML
+# Copyright (c) 2013 OpenStack Foundation
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#    http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or
+# implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+""" Methods to create and manipulate the XML
 """
 import data_structures
 import neutron.plugins.ml2.drivers.datacom.utils as utils
+
 
 class ManagedXml:
     def __init__(self):
         self.xml = data_structures.Cfg_data()
 
-    def findVlan(self, vid):
+    def find_vlan(self, vid):
         """ Find the vlan with the specified vid
         """
 
@@ -17,11 +33,11 @@ class ManagedXml:
         else:
             return None
 
-    def addVlan(self, vid, name='', ports=[]):
+    def add_vlan(self, vid, name='', ports=[]):
         """ This method adds a vlan to the XML an returns it's instance.
         """
 
-        if self.findVlan(vid):
+        if self.find_vlan(vid):
             raise utils.XMLVlanError("Vlan already exists "+str(vid))
 
         vlan = data_structures.Vlan_global(vid)
@@ -36,32 +52,32 @@ class ManagedXml:
 
         return vlan
 
-    def removeVlan(self, vid):
+    def remove_vlan(self, vid):
         """ This method revmoes a vlan on the XML if it exists.
         """
 
-        if not self.findVlan(vid):
+        if not self.find_vlan(vid):
             raise utils.XMLVlanError("Vlan does not exsits or the vid " + \
                     str(vid) + " is invalid")
 
-        vlan = self.findVlan(vid)
+        vlan = self.find_vlan(vid)
         del vlan.active
 
-    def addPortsToVlan(self, vid, ports):
+    def add_ports_to_vlan(self, vid, ports):
         """ This method adds ports to an existing vlan
         """
 
-        vlan = self.findVlan(vid)
+        vlan = self.find_vlan(vid)
         if vlan:
             vlan.ports.add_bits(ports)
         else:
             raise utils.XMLPortError("No such vlan "+str(vid))
 
-    def removePortsFromVlan(self, vid, ports):
+    def remove_ports_from_vlan(self, vid, ports):
         """ This method removoes ports from an existing vlan
         """
 
-        vlan = self.findVlan(vid)
+        vlan = self.find_vlan(vid)
         if vlan:
             vlan.ports.remove_bits(ports)
         else:
@@ -79,9 +95,9 @@ class ManagedXml:
 
 if __name__ == '__main__':
     xml = ManagedXml()
-    vlan = xml.addVlan(42, name='aaa')
+    vlan = xml.add_vlan(42, name='aaa')
 
-    xml.addPortsToVlan(42, [2])
+    xml.add_ports_to_vlan(42, [2])
 
     from dcclient.rpc import RPC
     switch = RPC('admin', 'admin', '192.168.0.11', 'http')

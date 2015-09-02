@@ -1,8 +1,24 @@
+# Copyright (c) 2013 OpenStack Foundation
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#    http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or
+# implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """ Data structures used to build the XML
 """
 
 import xml.etree.ElementTree as ET
 import neutron.plugins.ml2.drivers.datacom.utils as utils
+from utils import Vlan
 
 
 class Pbits(object):
@@ -82,7 +98,7 @@ class Pbits(object):
         self.bits = self.bits & ~ new_bits
 
 
-class Vlan_global(object):
+class VlanGlobal(object):
     """ Class vlanglobal represents a VLan.
 
         This class has three properties:
@@ -143,7 +159,7 @@ class Vlan_global(object):
     @vid.setter
     def vid(self, vid):
         assert type(vid) is int
-        assert vid >= utils.MIN_VLAN and vid <= utils.MAX_VLAN
+        assert Vlan.MIN_INDEX <= vid <= Vlan.MAX_INDEX
         self._vid = vid
 
     @vid.deleter
@@ -160,7 +176,7 @@ class Vlan_global(object):
         self._ports = ports
 
     @ports.deleter
-    def ports(self, ports):
+    def ports(self):
         del self.ports
 
     def as_xml(self):
@@ -169,7 +185,7 @@ class Vlan_global(object):
         xml = ET.Element("vlan_global")
         xml.attrib["id0"] = str(self.vid)
         ET.SubElement(xml, "vid").text = str(self.vid)
-        if self.active == True:
+        if self.active:
             ET.SubElement(xml, "active").text = "1"
         else:
             ET.SubElement(xml, "active").text = "0"
@@ -184,7 +200,7 @@ class Vlan_global(object):
         return ET.tostring(self.as_xml())
 
 
-class Cfg_data(object):
+class CfgData(object):
     """ One class to contain them all
 
         This class has one property:
@@ -211,7 +227,7 @@ class Cfg_data(object):
         assert type(vlans) is list
         # first check if every member of the list is a vlan
         for vlan in vlans:
-            assert isinstance(vlan, Vlan_global)
+            assert isinstance(vlan, VlanGlobal)
 
         # now create the list and add each vlan
         self._vlans = []
@@ -241,11 +257,11 @@ class Interface(object):
 
 
 if __name__ == '__main__':
-    vlan = Vlan_global(42)
+    vlan = VlanGlobal(42)
     ports = Pbits([2, 3, 6])
 
     vlan.active = True
     vlan.ports = ports
 
-    c = Cfg_data()
+    c = CfgData()
     c.vlans = [vlan]
