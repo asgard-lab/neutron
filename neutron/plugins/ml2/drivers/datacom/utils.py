@@ -20,6 +20,11 @@ class Vlan:
     MAX_INDEX = 4000
 
 
+class Ports:
+    MAX_PORTS = 2**30 - 1
+    MIN_PORTS = 1
+
+
 class ExceptionTemplate(Exception):
     def __call__(self, *args):
         return self.__class__(*(self.args + args))
@@ -39,3 +44,4 @@ class RPCError(ExceptionTemplate):
 
 class DMConfigError(ExceptionTemplate):
     pass
+

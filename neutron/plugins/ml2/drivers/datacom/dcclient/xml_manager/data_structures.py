@@ -18,7 +18,6 @@
 
 import xml.etree.ElementTree as ET
 import neutron.plugins.ml2.drivers.datacom.utils as utils
-from utils import Vlan
 
 
 class Pbits(object):
@@ -52,6 +51,11 @@ class Pbits(object):
             self.remove_bits(other)
         return self
 
+    def _port_constraint_checker(self, bits):
+        if not (utils.Ports.MIN_PORTS <= bits <= utils.Ports.MAX_PORTS):
+            raise utils.DMPortERror("Invalid port value %d. The 'MAX_VALUE' constraint is %d and the 'MIN_VALUE' "
+                                    "constraint is %d." % (bits, utils.Ports.MAX_PORTS, utils.Ports.MIN_PORTS))
+
     @property
     def bits(self):
         return self._bits
@@ -60,9 +64,11 @@ class Pbits(object):
     def bits(self, bits):
         assert type(bits) is int or type(bits) is list
         if type(bits) is int:
-            self._bits = bits
+            aux_bits = bits
         else:
-            self._bits = sum([1 << (i-1) for i in set(bits)])
+            aux_bits = sum([1 << (i-1) for i in set(bits)])
+
+        self._port_constraint_checker(aux_bits)
 
     @bits.deleter
     def bits(self):
@@ -86,6 +92,8 @@ class Pbits(object):
         else:
             new_bits = sum([1 << (i-1) for i in set(bits)])
 
+        self._port_constraint_checker(new_bits)
+
         self.bits = self.bits | new_bits
 
     def remove_bits(self, bits):
@@ -94,6 +102,8 @@ class Pbits(object):
             new_bits = bits
         else:
             new_bits = sum([1 << (i-1) for i in set(bits)])
+
+        self._port_constraint_checker(new_bits)
 
         self.bits = self.bits & ~ new_bits
 
@@ -115,7 +125,6 @@ class VlanGlobal(object):
             name (optional): string.
             ports (optional): Pbits.
     """
-    # TODO: adicionar checagens de limites nas properties
 
     def __init__(self, vid, name='', ports=None, active=True):
         self.vid = vid
@@ -125,6 +134,11 @@ class VlanGlobal(object):
             self.ports = Pbits(0)
         self.name = name
         self.active = active
+
+    def _vid_constraint_checker(self, vid):
+        if not utils.Vlan.MIN_INDEX <= vid <= utils.Vlan.MAX_INDEX:
+            raise utils.XMLVlanError("Invalid vid value %d. The 'MAX_VALUE' constraint is %d and the 'MIN_VALUE' "
+                                    "constraint is %d." %(vid, utils.Vlan.MAX_INDEX, utils.VLan.MIN_INDEX))
 
     @property
     def active(self):
@@ -158,8 +172,8 @@ class VlanGlobal(object):
 
     @vid.setter
     def vid(self, vid):
-        assert type(vid) is int
-        assert Vlan.MIN_INDEX <= vid <= Vlan.MAX_INDEX
+        assert (type(vid) is int), "Expected type should be an integer"
+        self._vid_constraint_checker(vid)
         self._vid = vid
 
     @vid.deleter
