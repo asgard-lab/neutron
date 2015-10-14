@@ -13,15 +13,25 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from neutron.common import rpc as n_rpc
+import oslo_messaging
+
+from neutron.common import constants
 from neutron import manager
 
 
-class MetadataRpcCallback(n_rpc.RpcCallback):
-    """Metadata agent RPC callback in plugin implementations."""
+class MetadataRpcCallback(object):
+    """Metadata agent RPC callback in plugin implementations.
+
+    This class implements the server side of an rpc interface used by the
+    metadata service to make calls back into the Neutron plugin.  The client
+    side is defined in neutron.agent.metadata.agent.MetadataPluginAPI.  For
+    more information about changing rpc interfaces, see
+    doc/source/devref/rpc_api.rst.
+    """
 
     # 1.0  MetadataPluginAPI BASE_RPC_API_VERSION
-    RPC_API_VERSION = '1.0'
+    target = oslo_messaging.Target(version='1.0',
+                                   namespace=constants.RPC_NAMESPACE_METADATA)
 
     @property
     def plugin(self):

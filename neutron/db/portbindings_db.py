@@ -49,10 +49,7 @@ class PortBindingMixin(portbindings_base.PortBindingBaseMixin):
         values = filters and filters.get(portbindings.HOST_ID, [])
         if not values:
             return query
-        if len(values) == 1:
-            query = query.filter(PortBindingPort.host == values[0])
-        else:
-            query = query.filter(PortBindingPort.host.in_(values))
+        query = query.filter(PortBindingPort.host.in_(values))
         return query
 
     db_base_plugin_v2.NeutronDbPluginV2.register_model_query_hook(
@@ -90,14 +87,14 @@ class PortBindingMixin(portbindings_base.PortBindingBaseMixin):
                 else:
                     bind_port.host = host
             else:
-                host = (bind_port and bind_port.host or None)
+                host = bind_port.host if bind_port else None
         self._extend_port_dict_binding_host(port, host)
 
     def get_port_host(self, context, port_id):
         with context.session.begin(subtransactions=True):
             bind_port = context.session.query(
                 PortBindingPort).filter_by(port_id=port_id).first()
-            return bind_port and bind_port.host or None
+            return bind_port.host if bind_port else None
 
     def _extend_port_dict_binding_host(self, port_res, host):
         super(PortBindingMixin, self).extend_port_dict_binding(
@@ -105,7 +102,7 @@ class PortBindingMixin(portbindings_base.PortBindingBaseMixin):
         port_res[portbindings.HOST_ID] = host
 
     def extend_port_dict_binding(self, port_res, port_db):
-        host = (port_db.portbinding and port_db.portbinding.host or None)
+        host = port_db.portbinding.host if port_db.portbinding else None
         self._extend_port_dict_binding_host(port_res, host)
 
 

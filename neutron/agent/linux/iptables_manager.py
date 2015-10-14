@@ -18,21 +18,28 @@
 
 """Implements iptables rules using linux utilities."""
 
-import inspect
+import collections
+import contextlib
 import os
 import re
+import sys
 
-from oslo.config import cfg
+from oslo_concurrency import lockutils
+from oslo_config import cfg
+from oslo_log import log as logging
+from oslo_utils import excutils
+import six
 
 from neutron.agent.common import config
 from neutron.agent.linux import iptables_comments as ic
 from neutron.agent.linux import utils as linux_utils
+from neutron.common import exceptions as n_exc
 from neutron.common import utils
-from neutron.openstack.common import excutils
-from neutron.openstack.common import lockutils
-from neutron.openstack.common import log as logging
+from neutron.i18n import _LE, _LW
 
 LOG = logging.getLogger(__name__)
+
+config.register_iptables_opts(cfg.CONF)
 
 
 # NOTE(vish): Iptables supports chain names of up to 28 characters,  and we
@@ -41,7 +48,7 @@ LOG = logging.getLogger(__name__)
 #             (max_chain_name_length - len('-POSTROUTING') == 16)
 def get_binary_name():
     """Grab the name of the binary we're running in."""
-    return os.path.basename(inspect.stack()[-1][1])[:16]
+    return os.path.basename(sys.argv[0])[:16].replace(' ', '_')
 
 binary_name = get_binary_name()
 
@@ -58,7 +65,17 @@ IPTABLES_ERROR_LINES_OF_CONTEXT = 5
 def comment_rule(rule, comment):
     if not cfg.CONF.AGENT.comment_iptables_rules or not comment:
         return rule
-    return '%s -m comment --comment "%s"' % (rule, comment)
+    # iptables-save outputs the comment before the jump so we need to match
+    # that order so _find_last_entry works
+    comment = '-m comment --comment "%s"' % comment
+    if rule.startswith('-j'):
+        # this is a jump only rule so we just put the comment first
+        return '%s %s' % (comment, rule)
+    try:
+        jpos = rule.index(' -j ')
+        return ' '.join((rule[:jpos], comment, rule[jpos + 1:]))
+    except ValueError:
+        return '%s %s' % (rule, comment)
 
 
 def get_chain_name(chain_name, wrap=True):
@@ -122,8 +139,8 @@ class IptablesTable(object):
         named chains without interfering with one another.
 
         At the moment, its wrapped name is <binary name>-<chain name>,
-        so if nova-compute creates a chain named 'OUTPUT', it'll actually
-        end up named 'nova-compute-OUTPUT'.
+        so if neutron-openvswitch-agent creates a chain named 'OUTPUT',
+        it'll actually end up being named 'neutron-openvswi-OUTPUT'.
 
         """
         name = get_chain_name(name, wrap)
@@ -138,19 +155,6 @@ class IptablesTable(object):
         else:
             return self.unwrapped_chains
 
-    def ensure_remove_chain(self, name, wrap=True):
-        """Ensure the chain is removed.
-
-        This removal "cascades". All rule in the chain are removed, as are
-        all rules in other chains that jump to it.
-        """
-        name = get_chain_name(name, wrap)
-        chain_set = self._select_chain_set(wrap)
-        if name not in chain_set:
-            return
-
-        self.remove_chain(name, wrap)
-
     def remove_chain(self, name, wrap=True):
         """Remove named chain.
 
@@ -164,8 +168,8 @@ class IptablesTable(object):
         chain_set = self._select_chain_set(wrap)
 
         if name not in chain_set:
-            LOG.warn(_('Attempted to remove chain %s which does not exist'),
-                     name)
+            LOG.debug('Attempted to remove chain %s which does not exist',
+                      name)
             return
 
         chain_set.remove(name)
@@ -244,8 +248,8 @@ class IptablesTable(object):
                                                       self.wrap_name,
                                                       comment=comment))
         except ValueError:
-            LOG.warn(_('Tried to remove rule that was not there:'
-                       ' %(chain)r %(rule)r %(wrap)r %(top)r'),
+            LOG.warn(_LW('Tried to remove rule that was not there:'
+                         ' %(chain)r %(rule)r %(wrap)r %(top)r'),
                      {'chain': chain, 'rule': rule,
                       'top': top, 'wrap': wrap})
 
@@ -253,9 +257,6 @@ class IptablesTable(object):
         chain = get_chain_name(chain, wrap)
         return [rule for rule in self.rules
                 if rule.chain == chain and rule.wrap == wrap]
-
-    def is_chain_empty(self, chain, wrap=True):
-        return not self._get_chain_rules(chain, wrap)
 
     def empty_chain(self, chain, wrap=True):
         """Remove all rules from a chain."""
@@ -278,10 +279,10 @@ class IptablesManager(object):
 
     A number of chains are set up to begin with.
 
-    First, neutron-filter-top. It's added at the top of FORWARD and OUTPUT. Its
-    name is not wrapped, so it's shared between the various nova workers. It's
-    intended for rules that need to live at the top of the FORWARD and OUTPUT
-    chains. It's in both the ipv4 and ipv6 set of tables.
+    First, neutron-filter-top. It's added at the top of FORWARD and OUTPUT.
+    Its name is not wrapped, so it's shared between the various neutron
+    workers. It's intended for rules that need to live at the top of the
+    FORWARD and OUTPUT chains. It's in both the ipv4 and ipv6 set of tables.
 
     For ipv4 and ipv6, the built-in INPUT, OUTPUT, and FORWARD filter chains
     are wrapped, meaning that the "real" INPUT chain has a rule that jumps to
@@ -294,17 +295,14 @@ class IptablesManager(object):
 
     """
 
-    def __init__(self, _execute=None, state_less=False,
-                 root_helper=None, use_ipv6=False, namespace=None,
-                 binary_name=binary_name):
+    def __init__(self, _execute=None, state_less=False, use_ipv6=False,
+                 namespace=None, binary_name=binary_name):
         if _execute:
             self.execute = _execute
         else:
             self.execute = linux_utils.execute
 
-        config.register_iptables_opts(cfg.CONF)
         self.use_ipv6 = use_ipv6
-        self.root_helper = root_helper
         self.namespace = namespace
         self.iptables_apply_deferred = False
         self.wrap_name = binary_name[:16]
@@ -313,7 +311,7 @@ class IptablesManager(object):
         self.ipv6 = {'filter': IptablesTable(binary_name=self.wrap_name)}
 
         # Add a neutron-filter-top chain. It's intended to be shared
-        # among the various nova components. It sits at the very top
+        # among the various neutron components. It sits at the very top
         # of FORWARD and OUTPUT.
         for tables in [self.ipv4, self.ipv6]:
             tables['filter'].add_chain('neutron-filter-top', wrap=False)
@@ -332,13 +330,19 @@ class IptablesManager(object):
 
         if not state_less:
             self.ipv4.update(
+                {'mangle': IptablesTable(binary_name=self.wrap_name)})
+            builtin_chains[4].update(
+                {'mangle': ['PREROUTING', 'INPUT', 'FORWARD', 'OUTPUT',
+                            'POSTROUTING']})
+            self.ipv4.update(
                 {'nat': IptablesTable(binary_name=self.wrap_name)})
             builtin_chains[4].update({'nat': ['PREROUTING',
                                       'OUTPUT', 'POSTROUTING']})
-            self.ipv4.update(
-                {'raw': IptablesTable(binary_name=self.wrap_name)})
-            builtin_chains[4].update({'raw': ['PREROUTING',
-                                      'OUTPUT']})
+
+        self.ipv4.update({'raw': IptablesTable(binary_name=self.wrap_name)})
+        builtin_chains[4].update({'raw': ['PREROUTING', 'OUTPUT']})
+        self.ipv6.update({'raw': IptablesTable(binary_name=self.wrap_name)})
+        builtin_chains[6].update({'raw': ['PREROUTING', 'OUTPUT']})
 
         for ip_version in builtin_chains:
             if ip_version == 4:
@@ -346,7 +350,7 @@ class IptablesManager(object):
             elif ip_version == 6:
                 tables = self.ipv6
 
-            for table, chains in builtin_chains[ip_version].iteritems():
+            for table, chains in six.iteritems(builtin_chains[ip_version]):
                 for chain in chains:
                     tables[table].add_chain(chain)
                     tables[table].add_rule(chain, '-j $%s' %
@@ -354,8 +358,8 @@ class IptablesManager(object):
 
         if not state_less:
             # Add a neutron-postrouting-bottom chain. It's intended to be
-            # shared among the various nova components. We set it as the last
-            # chain of POSTROUTING chain.
+            # shared among the various neutron components. We set it as the
+            # last chain of POSTROUTING chain.
             self.ipv4['nat'].add_chain('neutron-postrouting-bottom',
                                        wrap=False)
             self.ipv4['nat'].add_rule('POSTROUTING',
@@ -374,12 +378,34 @@ class IptablesManager(object):
             self.ipv4['nat'].add_chain('float-snat')
             self.ipv4['nat'].add_rule('snat', '-j $float-snat')
 
-    def is_chain_empty(self, table, chain, ip_version=4, wrap=True):
+            # Add a mark chain to mangle PREROUTING chain. It is used to
+            # identify ingress packets from a certain interface.
+            self.ipv4['mangle'].add_chain('mark')
+            self.ipv4['mangle'].add_rule('PREROUTING', '-j $mark')
+
+    def get_chain(self, table, chain, ip_version=4, wrap=True):
         try:
             requested_table = {4: self.ipv4, 6: self.ipv6}[ip_version][table]
         except KeyError:
-            return True
-        return requested_table.is_chain_empty(chain, wrap)
+            return []
+        return requested_table._get_chain_rules(chain, wrap)
+
+    def is_chain_empty(self, table, chain, ip_version=4, wrap=True):
+        return not self.get_chain(table, chain, ip_version, wrap)
+
+    @contextlib.contextmanager
+    def defer_apply(self):
+        """Defer apply context."""
+        self.defer_apply_on()
+        try:
+            yield
+        finally:
+            try:
+                self.defer_apply_off()
+            except Exception:
+                msg = _LE('Failure applying iptables rules')
+                LOG.exception(msg)
+                raise n_exc.IpTablesApplyException(msg)
 
     def defer_apply_on(self):
         self.iptables_apply_deferred = True
@@ -399,12 +425,15 @@ class IptablesManager(object):
         if self.namespace:
             lock_name += '-' + self.namespace
 
-        try:
-            with lockutils.lock(lock_name, utils.SYNCHRONIZED_PREFIX, True):
-                LOG.debug(_('Got semaphore / lock "%s"'), lock_name)
-                return self._apply_synchronized()
-        finally:
-            LOG.debug(_('Semaphore / lock released "%s"'), lock_name)
+        with lockutils.lock(lock_name, utils.SYNCHRONIZED_PREFIX, True):
+            return self._apply_synchronized()
+
+    def get_rules_for_table(self, table):
+        """Runs iptables-save on a table and returns the results."""
+        args = ['iptables-save', '-t', table]
+        if self.namespace:
+            args = ['ip', 'netns', 'exec', self.namespace] + args
+        return self.execute(args, run_as_root=True).split('\n')
 
     def _apply_synchronized(self):
         """Apply the current in-memory set of iptables rules.
@@ -422,7 +451,7 @@ class IptablesManager(object):
             args = ['%s-save' % (cmd,), '-c']
             if self.namespace:
                 args = ['ip', 'netns', 'exec', self.namespace] + args
-            all_tables = self.execute(args, root_helper=self.root_helper)
+            all_tables = self.execute(args, run_as_root=True)
             all_lines = all_tables.split('\n')
             # Traverse tables in sorted order for predictable dump output
             for table_name in sorted(tables):
@@ -436,7 +465,7 @@ class IptablesManager(object):
                 args = ['ip', 'netns', 'exec', self.namespace] + args
             try:
                 self.execute(args, process_input='\n'.join(all_lines),
-                             root_helper=self.root_helper)
+                             run_as_root=True)
             except RuntimeError as r_error:
                 with excutils.save_and_reraise_exception():
                     try:
@@ -455,10 +484,10 @@ class IptablesManager(object):
                                      all_lines[log_start:log_end],
                                      log_start + 1)
                                  )
-                    LOG.error(_("IPTablesManager.apply failed to apply the "
-                                "following set of iptables rules:\n%s"),
+                    LOG.error(_LE("IPTablesManager.apply failed to apply the "
+                                  "following set of iptables rules:\n%s"),
                               '\n'.join(log_lines))
-        LOG.debug(_("IPTablesManager.apply completed with success"))
+        LOG.debug("IPTablesManager.apply completed with success")
 
     def _find_table(self, lines, table_name):
         if len(lines) < 3:
@@ -468,7 +497,7 @@ class IptablesManager(object):
             start = lines.index('*%s' % table_name) - 1
         except ValueError:
             # Couldn't find table_name
-            LOG.debug(_('Unable to find table %s'), table_name)
+            LOG.debug('Unable to find table %s', table_name)
             return (0, 0)
         end = lines[start:].index('COMMIT') + start + 2
         return (start, end)
@@ -489,12 +518,12 @@ class IptablesManager(object):
 
         return rules_index
 
-    def _find_last_entry(self, filter_list, match_str):
-        # find a matching entry, starting from the bottom
-        for s in reversed(filter_list):
-            s = s.strip()
-            if match_str in s:
-                return s
+    def _find_last_entry(self, filter_map, match_str):
+        # find last matching entry
+        try:
+            return filter_map[match_str][-1]
+        except KeyError:
+            pass
 
     def _modify_rules(self, current_lines, table, table_name):
         # Chains are stored as sets to avoid duplicates.
@@ -519,6 +548,9 @@ class IptablesManager(object):
             (old_filter if self.wrap_name in line else
              new_filter).append(line.strip())
 
+        old_filter_map = make_filter_map(old_filter)
+        new_filter_map = make_filter_map(new_filter)
+
         rules_index = self._find_rules_index(new_filter)
 
         all_chains = [':%s' % name for name in unwrapped_chains]
@@ -530,9 +562,9 @@ class IptablesManager(object):
         for chain in all_chains:
             chain_str = str(chain).strip()
 
-            old = self._find_last_entry(old_filter, chain_str)
+            old = self._find_last_entry(old_filter_map, chain_str)
             if not old:
-                dup = self._find_last_entry(new_filter, chain_str)
+                dup = self._find_last_entry(new_filter_map, chain_str)
             new_filter = [s for s in new_filter if chain_str not in s.strip()]
 
             # if no old or duplicates, use original chain
@@ -553,9 +585,9 @@ class IptablesManager(object):
             # Further down, we weed out duplicates from the bottom of the
             # list, so here we remove the dupes ahead of time.
 
-            old = self._find_last_entry(old_filter, rule_str)
+            old = self._find_last_entry(old_filter_map, rule_str)
             if not old:
-                dup = self._find_last_entry(new_filter, rule_str)
+                dup = self._find_last_entry(new_filter_map, rule_str)
             new_filter = [s for s in new_filter if rule_str not in s.strip()]
 
             # if no old or duplicates, use original rule
@@ -672,8 +704,8 @@ class IptablesManager(object):
         """Return the sum of the traffic counters of all rules of a chain."""
         cmd_tables = self._get_traffic_counters_cmd_tables(chain, wrap)
         if not cmd_tables:
-            LOG.warn(_('Attempted to get traffic counters of chain %s which '
-                       'does not exist'), chain)
+            LOG.warn(_LW('Attempted to get traffic counters of chain %s which '
+                         'does not exist'), chain)
             return
 
         name = get_chain_name(chain, wrap)
@@ -685,8 +717,7 @@ class IptablesManager(object):
                 args.append('-Z')
             if self.namespace:
                 args = ['ip', 'netns', 'exec', self.namespace] + args
-            current_table = (self.execute(args,
-                             root_helper=self.root_helper))
+            current_table = self.execute(args, run_as_root=True)
             current_lines = current_table.split('\n')
 
             for line in current_lines[2:]:
@@ -702,3 +733,29 @@ class IptablesManager(object):
                 acc['bytes'] += int(data[1])
 
         return acc
+
+
+def make_filter_map(filter_list):
+    filter_map = collections.defaultdict(list)
+    for data in filter_list:
+        # strip any [packet:byte] counts at start or end of lines,
+        # for example, chains look like ":neutron-foo - [0:0]"
+        # and rules look like "[0:0] -A neutron-foo..."
+        if data.startswith('['):
+            key = data.rpartition('] ')[2]
+        elif data.endswith(']'):
+            key = data.rsplit(' [', 1)[0]
+            if key.endswith(' -'):
+                key = key[:-2]
+        else:
+            # things like COMMIT, *filter, and *nat land here
+            continue
+        filter_map[key].append(data)
+        # regular IP(v6) entries are translated into /32s or /128s so we
+        # include a lookup without the CIDR here to match as well
+        for cidr in ('/32', '/128'):
+            if cidr in key:
+                alt_key = key.replace(cidr, '')
+                filter_map[alt_key].append(data)
+    # return a regular dict so readers don't accidentally add entries
+    return dict(filter_map)

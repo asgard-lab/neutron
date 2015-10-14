@@ -127,6 +127,45 @@ class NeutronPluginBaseV2(object):
         """
         pass
 
+    def create_subnetpool(self, context, subnetpool):
+        """Create a subnet pool.
+
+        :param context: neutron api request context
+        :param subnetpool: Dictionary representing the subnetpool to create.
+        """
+        raise NotImplementedError()
+
+    def update_subnetpool(self, context, id, subnetpool):
+        """Update a subnet pool.
+
+        :param context: neutron api request context
+        :param subnetpool: Dictionary representing the subnetpool attributes
+                           to update.
+        """
+        raise NotImplementedError()
+
+    def get_subnetpool(self, context, id, fields=None):
+        """Show a subnet pool.
+
+        :param context: neutron api request context
+        :param id: The UUID of the subnetpool to show.
+        """
+        raise NotImplementedError()
+
+    def get_subnetpools(self, context, filters=None, fields=None,
+                        sorts=None, limit=None, marker=None,
+                        page_reverse=False):
+        """Retrieve list of subnet pools."""
+        raise NotImplementedError()
+
+    def delete_subnetpool(self, context, id):
+        """Delete a subnet pool.
+
+        :param context: neutron api request context
+        :param id: The UUID of the subnet pool to delete.
+        """
+        raise NotImplementedError()
+
     @abc.abstractmethod
     def create_network(self, context, network):
         """Create a network.
@@ -350,3 +389,12 @@ class NeutronPluginBaseV2(object):
         """
         return (self.__class__.start_rpc_listeners !=
                 NeutronPluginBaseV2.start_rpc_listeners)
+
+    def get_workers(self):
+        """Returns a collection NeutronWorker instances
+
+        If a plugin needs to define worker processes outside of API/RPC workers
+        then it will override this and return a collection of NeutronWorker
+        instances
+        """
+        return ()

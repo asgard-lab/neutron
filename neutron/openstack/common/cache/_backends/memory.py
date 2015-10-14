@@ -14,10 +14,10 @@
 
 import collections
 
-from oslo.utils import timeutils
+from oslo_utils import timeutils
+from oslo_concurrency import lockutils
 
 from neutron.openstack.common.cache import backends
-from neutron.openstack.common import lockutils
 
 
 class MemoryBackend(backends.BaseCache):

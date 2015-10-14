@@ -1,4 +1,5 @@
-# Copyright 2014 OpenStack Foundation
+# Copyright 2012 New Dream Network, LLC (DreamHost)
+# All Rights Reserved.
 #
 #    Licensed under the Apache License, Version 2.0 (the "License"); you may
 #    not use this file except in compliance with the License. You may obtain
@@ -12,332 +13,674 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
-import collections
-import logging
-import pprint
+import copy
+import os
+import sys
+import textwrap
 
-import alembic
-import alembic.autogenerate
-import alembic.migration
+from alembic.autogenerate import api as alembic_ag_api
+from alembic import config as alembic_config
+from alembic.operations import ops as alembic_ops
+from alembic import script as alembic_script
+import fixtures
 import mock
-from oslo.config import cfg
-from oslo.db.sqlalchemy import test_base
-from oslo.db.sqlalchemy import test_migrations
-from oslo.db.sqlalchemy import utils
-import pkg_resources as pkg
-import sqlalchemy
-import sqlalchemy.sql.expression as expr
-import testscenarios
+import pkg_resources
+import sqlalchemy as sa
 
-from neutron.db.migration import cli as migration
-from neutron.db.migration.models import head as head_models
-from neutron.openstack.common.fixture import config
-
-LOG = logging.getLogger(__name__)
+from neutron.db import migration
+from neutron.db.migration import autogen
+from neutron.db.migration import cli
+from neutron.tests import base
+from neutron.tests import tools
+from neutron.tests.unit import testlib_api
 
 
-cfg.CONF.import_opt('core_plugin', 'neutron.common.config')
-cfg.CONF.import_opt('service_plugins', 'neutron.common.config')
+class FakeConfig(object):
+    service = ''
 
 
-def _discover_plugins(plugin_type):
-    return [
-        '%s.%s' % (entrypoint.module_name, entrypoint.attrs[0])
-        for entrypoint in
-        pkg.iter_entry_points(plugin_type)
-    ]
+class FakeRevision(object):
+    path = 'fakepath'
 
-SERVICE_PLUGINS = _discover_plugins("neutron.service_plugins")
-CORE_PLUGINS = _discover_plugins('neutron.core_plugins')
+    def __init__(self, labels=None, down_revision=None, is_branch_point=False):
+        if not labels:
+            labels = set()
+        self.branch_labels = labels
+        self.down_revision = down_revision
+        self.is_branch_point = is_branch_point
+        self.revision = tools.get_random_string()
+        self.module = mock.MagicMock()
 
 
-class _TestModelsMigrations(test_migrations.ModelsMigrationsSync):
-    '''Test for checking of equality models state and migrations.
-
-    For the opportunistic testing you need to set up a db named
-    'openstack_citest' with user 'openstack_citest' and password
-    'openstack_citest' on localhost.
-    The test will then use that db and user/password combo to run the tests.
-
-    For PostgreSQL on Ubuntu this can be done with the following commands::
-
-        sudo -u postgres psql
-        postgres=# create user openstack_citest with createdb login password
-                  'openstack_citest';
-        postgres=# create database openstack_citest with owner
-                   openstack_citest;
-
-    For MySQL on Ubuntu this can be done with the following commands::
-
-        mysql -u root
-        >create database openstack_citest;
-        >grant all privileges on openstack_citest.* to
-         openstack_citest@localhost identified by 'openstack_citest';
-
-    Output is a list that contains information about differences between db and
-    models. Output example::
-
-       [('add_table',
-         Table('bat', MetaData(bind=None),
-               Column('info', String(), table=<bat>), schema=None)),
-        ('remove_table',
-         Table(u'bar', MetaData(bind=None),
-               Column(u'data', VARCHAR(), table=<bar>), schema=None)),
-        ('add_column',
-         None,
-         'foo',
-         Column('data', Integer(), table=<foo>)),
-        ('remove_column',
-         None,
-         'foo',
-         Column(u'old_data', VARCHAR(), table=None)),
-        [('modify_nullable',
-          None,
-          'foo',
-          u'x',
-          {'existing_server_default': None,
-          'existing_type': INTEGER()},
-          True,
-          False)]]
-
-    * ``remove_*`` means that there is extra table/column/constraint in db;
-
-    * ``add_*`` means that it is missing in db;
-
-    * ``modify_*`` means that on column in db is set wrong
-      type/nullable/server_default. Element contains information:
-        * what should be modified,
-        * schema,
-        * table,
-        * column,
-        * existing correct column parameters,
-        * right value,
-        * wrong value.
-
+class MigrationEntrypointsMemento(fixtures.Fixture):
+    '''Create a copy of the migration entrypoints map so it can be restored
+       during test cleanup.
     '''
 
+    def _setUp(self):
+        self.ep_backup = {}
+        for proj, ep in cli.migration_entrypoints.items():
+            self.ep_backup[proj] = copy.copy(ep)
+        self.addCleanup(self.restore)
+
+    def restore(self):
+        cli.migration_entrypoints = self.ep_backup
+
+
+class TestDbMigration(base.BaseTestCase):
+
     def setUp(self):
-        patch = mock.patch.dict('sys.modules', {
-            'ryu': mock.MagicMock(),
-            'ryu.app': mock.MagicMock(),
-            'heleosapi': mock.MagicMock(),
-            'midonetclient': mock.MagicMock(),
-            'midonetclient.neutron': mock.MagicMock(),
-        })
-        patch.start()
-        self.addCleanup(patch.stop)
-        super(_TestModelsMigrations, self).setUp()
-        self.cfg = self.useFixture(config.Config())
-        self.cfg.config(service_plugins=SERVICE_PLUGINS,
-                        core_plugin=self.core_plugin)
-        self.alembic_config = migration.get_alembic_config()
-        self.alembic_config.neutron_config = cfg.CONF
+        super(TestDbMigration, self).setUp()
+        mock.patch('alembic.op.get_bind').start()
+        self.mock_alembic_is_offline = mock.patch(
+            'alembic.context.is_offline_mode', return_value=False).start()
+        self.mock_alembic_is_offline.return_value = False
+        self.mock_sa_inspector = mock.patch(
+            'sqlalchemy.engine.reflection.Inspector').start()
 
-    def db_sync(self, engine):
-        cfg.CONF.set_override('connection', engine.url, group='database')
-        migration.do_alembic_command(self.alembic_config, 'upgrade', 'head')
-        cfg.CONF.clear_override('connection', group='database')
+    def _prepare_mocked_sqlalchemy_inspector(self):
+        mock_inspector = mock.MagicMock()
+        mock_inspector.get_table_names.return_value = ['foo', 'bar']
+        mock_inspector.get_columns.return_value = [{'name': 'foo_column'},
+                                                   {'name': 'bar_column'}]
+        self.mock_sa_inspector.from_engine.return_value = mock_inspector
 
-    def get_engine(self):
-        return self.engine
+    def test_schema_has_table(self):
+        self._prepare_mocked_sqlalchemy_inspector()
+        self.assertTrue(migration.schema_has_table('foo'))
 
-    def get_metadata(self):
-        return head_models.get_metadata()
+    def test_schema_has_table_raises_if_offline(self):
+        self.mock_alembic_is_offline.return_value = True
+        self.assertRaises(RuntimeError, migration.schema_has_table, 'foo')
 
-    def include_object(self, object_, name, type_, reflected, compare_to):
-        if type_ == 'table' and name == 'alembic_version':
-                return False
+    def test_schema_has_column_missing_table(self):
+        self._prepare_mocked_sqlalchemy_inspector()
+        self.assertFalse(migration.schema_has_column('meh', 'meh'))
 
-        return super(_TestModelsMigrations, self).include_object(
-            object_, name, type_, reflected, compare_to)
+    def test_schema_has_column(self):
+        self._prepare_mocked_sqlalchemy_inspector()
+        self.assertTrue(migration.schema_has_column('foo', 'foo_column'))
 
-    def compare_server_default(self, ctxt, ins_col, meta_col,
-                               insp_def, meta_def, rendered_meta_def):
-        return self._compare_server_default(ctxt.bind, meta_col, insp_def,
-                                            meta_def)
+    def test_schema_has_column_raises_if_offline(self):
+        self.mock_alembic_is_offline.return_value = True
+        self.assertRaises(RuntimeError, migration.schema_has_column,
+                          'foo', 'foo_col')
 
-    # TODO(akamyshnikova):remove _compare_server_default methods when it
-    # appears in oslo.db(version>1.0.0)
-    @utils.DialectFunctionDispatcher.dispatch_for_dialect("*")
-    def _compare_server_default(bind, meta_col, insp_def, meta_def):
-        pass
+    def test_schema_has_column_missing_column(self):
+        self._prepare_mocked_sqlalchemy_inspector()
+        self.assertFalse(migration.schema_has_column(
+            'foo', column_name='meh'))
 
-    @_compare_server_default.dispatch_for('mysql')
-    def _compare_server_default(bind, meta_col, insp_def, meta_def):
-        if isinstance(meta_col.type, sqlalchemy.Boolean):
-            if meta_def is None or insp_def is None:
-                return meta_def != insp_def
-            return not (
-                isinstance(meta_def.arg, expr.True_) and insp_def == "'1'" or
-                isinstance(meta_def.arg, expr.False_) and insp_def == "'0'"
+
+class TestCli(base.BaseTestCase):
+    def setUp(self):
+        super(TestCli, self).setUp()
+        self.do_alembic_cmd_p = mock.patch.object(cli, 'do_alembic_command')
+        self.do_alembic_cmd = self.do_alembic_cmd_p.start()
+        self.mock_alembic_err = mock.patch('alembic.util.err').start()
+        self.mock_alembic_err.side_effect = SystemExit
+
+        def mocked_root_dir(cfg):
+            return os.path.join('/fake/dir', cli._get_project_base(cfg))
+        mock_root = mock.patch.object(cli, '_get_package_root_dir').start()
+        mock_root.side_effect = mocked_root_dir
+        # Avoid creating fake directories
+        mock.patch('neutron.common.utils.ensure_dir').start()
+
+        # Set up some configs and entrypoints for tests to chew on
+        self.configs = []
+        self.projects = ('neutron', 'networking-foo', 'neutron-fwaas')
+        ini = os.path.join(os.path.dirname(cli.__file__), 'alembic.ini')
+        self.useFixture(MigrationEntrypointsMemento())
+        cli.migration_entrypoints = {}
+        for project in self.projects:
+            config = alembic_config.Config(ini)
+            config.set_main_option('neutron_project', project)
+            module_name = project.replace('-', '_') + '.db.migration'
+            attrs = ('alembic_migrations',)
+            script_location = ':'.join([module_name, attrs[0]])
+            config.set_main_option('script_location', script_location)
+            self.configs.append(config)
+            entrypoint = pkg_resources.EntryPoint(project,
+                                                  module_name,
+                                                  attrs=attrs)
+            cli.migration_entrypoints[project] = entrypoint
+
+    def _main_test_helper(self, argv, func_name, exp_kwargs=[{}]):
+        with mock.patch.object(sys, 'argv', argv),\
+            mock.patch.object(cli, 'run_sanity_checks'),\
+            mock.patch.object(cli, 'validate_revisions'),\
+            mock.patch.object(cli, '_use_separate_migration_branches'):
+
+            cli.main()
+            self.do_alembic_cmd.assert_has_calls(
+                [mock.call(mock.ANY, func_name, **kwargs)
+                 for kwargs in exp_kwargs]
             )
 
-        if isinstance(meta_col.type, sqlalchemy.Integer):
-            if meta_def is None or insp_def is None:
-                return meta_def != insp_def
-            return meta_def.arg == insp_def
+    def test_stamp(self):
+        self._main_test_helper(
+            ['prog', 'stamp', 'foo'],
+            'stamp',
+            [{'revision': 'foo', 'sql': False}]
+        )
 
-    @_compare_server_default.dispatch_for('postgresql')
-    def _compare_server_default(bind, meta_col, insp_def, meta_def):
-        if isinstance(meta_col.type, sqlalchemy.Enum):
-            if meta_def is None or insp_def is None:
-                return meta_def != insp_def
-            return insp_def != "'%s'::%s" % (meta_def.arg, meta_col.type.name)
-        elif isinstance(meta_col.type, sqlalchemy.String):
-            if meta_def is None or insp_def is None:
-                return meta_def != insp_def
-            return insp_def != "'%s'::character varying" % meta_def.arg
+        self._main_test_helper(
+            ['prog', 'stamp', 'foo', '--sql'],
+            'stamp',
+            [{'revision': 'foo', 'sql': True}]
+        )
 
-    def test_models_sync(self):
-        # drop all tables after a test run
-        self.addCleanup(self._cleanup)
+    def test_branches(self):
+        self._main_test_helper(
+            ['prog', 'branches'],
+            'branches',
+            [{'verbose': False}])
 
-        # run migration scripts
-        self.db_sync(self.get_engine())
+        self._main_test_helper(
+            ['prog', 'branches', '--verbose'],
+            'branches',
+            [{'verbose': True}])
 
-        with self.get_engine().connect() as conn:
-            opts = {
-                'include_object': self.include_object,
-                'compare_type': self.compare_type,
-                'compare_server_default': self.compare_server_default,
-            }
-            mc = alembic.migration.MigrationContext.configure(conn, opts=opts)
+    def test_current(self):
+        self._main_test_helper(
+            ['prog', 'current'],
+            'current',
+            [{'verbose': False}])
 
-            # compare schemas and fail with diff, if it's not empty
-            diff1 = alembic.autogenerate.compare_metadata(mc,
-                                                          self.get_metadata())
-            insp = sqlalchemy.engine.reflection.Inspector.from_engine(
-                self.get_engine())
-            dialect = self.get_engine().dialect.name
-            self.check_mysql_engine(dialect, insp)
-            diff2 = self.compare_foreign_keys(self.get_metadata(),
-                                              self.get_engine())
+        self._main_test_helper(
+            ['prog', 'current', '--verbose'],
+            'current',
+            [{'verbose': True}])
 
-        result = filter(self.remove_unrelated_errors, diff1 + diff2)
-        if result:
-            msg = pprint.pformat(result, indent=2, width=20)
+    def test_history(self):
+        self._main_test_helper(
+            ['prog', 'history'],
+            'history',
+            [{'verbose': False}])
 
-            self.fail("Models and migration scripts aren't in sync:\n%s" % msg)
+        self._main_test_helper(
+            ['prog', 'history', '--verbose'],
+            'history',
+            [{'verbose': True}])
 
-    def check_mysql_engine(self, dialect, insp):
-        if dialect != 'mysql':
-            return
+    def test_check_migration(self):
+        with mock.patch.object(cli, 'validate_head_file') as validate:
+            self._main_test_helper(['prog', 'check_migration'], 'branches')
+            self.assertEqual(len(self.projects), validate.call_count)
 
-        # Test that table creation on mysql only builds InnoDB tables
-        tables = insp.get_table_names()
-        self.assertTrue(len(tables) > 0,
-                        "No tables found. Wrong schema?")
-        noninnodb = [table for table in tables if
-                     insp.get_table_options(table)['mysql_engine'] != 'InnoDB'
-                     and table != 'alembic_version']
-        self.assertEqual(0, len(noninnodb), "%s non InnoDB tables created" %
-                                            noninnodb)
+    def _test_database_sync_revision(self, separate_branches=True):
+        with mock.patch.object(cli, 'update_head_file') as update,\
+                mock.patch.object(cli, '_use_separate_migration_branches',
+                                  return_value=separate_branches):
+            if separate_branches:
+                mock.patch('os.path.exists').start()
+            expected_kwargs = [{
+                'message': 'message', 'sql': False, 'autogenerate': True,
+            }]
+            self._main_test_helper(
+                ['prog', 'revision', '--autogenerate', '-m', 'message'],
+                'revision',
+                expected_kwargs
+            )
+            self.assertEqual(len(self.projects), update.call_count)
+            update.reset_mock()
 
-    FKInfo = collections.namedtuple('FKInfo', ['constrained_columns',
-                                               'referred_table',
-                                               'referred_columns'])
+            for kwarg in expected_kwargs:
+                kwarg['autogenerate'] = False
+                kwarg['sql'] = True
 
-    def compare_foreign_keys(self, metadata, bind):
-        """Compare foreign keys between model and db table.
+            self._main_test_helper(
+                ['prog', 'revision', '--sql', '-m', 'message'],
+                'revision',
+                expected_kwargs
+            )
+            self.assertEqual(len(self.projects), update.call_count)
 
-        Returns a list that contains information about:
-         * should be a new key added or removed existing,
-         * name of that key,
-         * source table,
-         * referred table,
-         * constrained columns,
-         * referred columns
+    def test_database_sync_revision(self):
+        self._test_database_sync_revision()
 
-         Output::
+    def test_database_sync_revision_no_branches(self):
+        # Test that old branchless approach is still supported
+        self._test_database_sync_revision(separate_branches=False)
 
-             [('drop_key',
-               'testtbl_fk_check_fkey',
-               'testtbl',
-               fk_info(constrained_columns=(u'fk_check',),
-                       referred_table=u'table',
-                       referred_columns=(u'fk_check',)))]
+    def test_upgrade_revision(self):
+        self._main_test_helper(
+            ['prog', 'upgrade', '--sql', 'head'],
+            'upgrade',
+            [{'desc': None, 'revision': 'heads', 'sql': True}]
+        )
 
-        """
+    def test_upgrade_delta(self):
+        self._main_test_helper(
+            ['prog', 'upgrade', '--delta', '3'],
+            'upgrade',
+            [{'desc': None, 'revision': '+3', 'sql': False}]
+        )
 
-        diff = []
-        insp = sqlalchemy.engine.reflection.Inspector.from_engine(bind)
-        # Get all tables from db
-        db_tables = insp.get_table_names()
-        # Get all tables from models
-        model_tables = metadata.tables
-        for table in db_tables:
-            if table not in model_tables:
-                continue
-            # Get all necessary information about key of current table from db
-            fk_db = dict((self._get_fk_info_from_db(i), i['name'])
-                         for i in insp.get_foreign_keys(table))
-            fk_db_set = set(fk_db.keys())
-            # Get all necessary information about key of current table from
-            # models
-            fk_models = dict((self._get_fk_info_from_model(fk), fk)
-                             for fk in model_tables[table].foreign_keys)
-            fk_models_set = set(fk_models.keys())
-            for key in (fk_db_set - fk_models_set):
-                diff.append(('drop_key', fk_db[key], table, key))
-                LOG.info(("Detected removed foreign key %(fk)r on "
-                          "table %(table)r"), {'fk': fk_db[key],
-                                               'table': table})
-            for key in (fk_models_set - fk_db_set):
-                diff.append(('add_key', fk_models[key], key))
-                LOG.info((
-                    "Detected added foreign key for column %(fk)r on table "
-                    "%(table)r"), {'fk': fk_models[key].column.name,
-                                   'table': table})
-        return diff
+    def test_upgrade_revision_delta(self):
+        self._main_test_helper(
+            ['prog', 'upgrade', 'kilo', '--delta', '3'],
+            'upgrade',
+            [{'desc': None, 'revision': 'kilo+3', 'sql': False}]
+        )
 
-    def _get_fk_info_from_db(self, fk):
-        return self.FKInfo(tuple(fk['constrained_columns']),
-                           fk['referred_table'],
-                           tuple(fk['referred_columns']))
+    def test_upgrade_expand(self):
+        self._main_test_helper(
+            ['prog', 'upgrade', '--expand'],
+            'upgrade',
+            [{'desc': cli.EXPAND_BRANCH,
+              'revision': 'expand@head',
+              'sql': False}]
+        )
 
-    def _get_fk_info_from_model(self, fk):
-        return self.FKInfo((fk.parent.name,), fk.column.table.name,
-                           (fk.column.name,))
+    def test_upgrade_expand_contract_are_mutually_exclusive(self):
+        with testlib_api.ExpectedException(SystemExit):
+            self._main_test_helper(
+                ['prog', 'upgrade', '--expand --contract'], 'upgrade')
 
-    # Remove some difference that are not mistakes just specific of
-        # dialects, etc
-    def remove_unrelated_errors(self, element):
-        insp = sqlalchemy.engine.reflection.Inspector.from_engine(
-            self.get_engine())
-        dialect = self.get_engine().dialect.name
-        if isinstance(element, tuple):
-            if dialect == 'mysql' and element[0] == 'remove_index':
-                table_name = element[1].table.name
-                for fk in insp.get_foreign_keys(table_name):
-                    if fk['name'] == element[1].name:
-                        return False
-                cols = [c.name for c in element[1].expressions]
-                for col in cols:
-                    if col in insp.get_pk_constraint(
-                            table_name)['constrained_columns']:
-                        return False
-        else:
-            for modified, _, table, column, _, _, new in element:
-                if modified == 'modify_default' and dialect == 'mysql':
-                    constrained = insp.get_pk_constraint(table)
-                    if column in constrained['constrained_columns']:
-                        return False
-        return True
+    def _test_upgrade_conflicts_with_revision(self, mode):
+        with testlib_api.ExpectedException(SystemExit):
+            self._main_test_helper(
+                ['prog', 'upgrade', '--%s revision1' % mode], 'upgrade')
 
-load_tests = testscenarios.load_tests_apply_scenarios
+    def _test_upgrade_conflicts_with_delta(self, mode):
+        with testlib_api.ExpectedException(SystemExit):
+            self._main_test_helper(
+                ['prog', 'upgrade', '--%s +3' % mode], 'upgrade')
 
-_scenarios = []
-for plugin in CORE_PLUGINS:
-    plugin_name = plugin.split('.')[-1]
-    class_name = plugin_name
-    _scenarios.append((class_name, {'core_plugin': plugin}))
+    def test_upgrade_expand_conflicts_with_revision(self):
+        self._test_upgrade_conflicts_with_revision('expand')
+
+    def test_upgrade_contract_conflicts_with_revision(self):
+        self._test_upgrade_conflicts_with_revision('contract')
+
+    def test_upgrade_expand_conflicts_with_delta(self):
+        self._test_upgrade_conflicts_with_delta('expand')
+
+    def test_upgrade_contract_conflicts_with_delta(self):
+        self._test_upgrade_conflicts_with_delta('contract')
+
+    def test_upgrade_contract(self):
+        self._main_test_helper(
+            ['prog', 'upgrade', '--contract'],
+            'upgrade',
+            [{'desc': cli.CONTRACT_BRANCH,
+              'revision': 'contract@head',
+              'sql': False}]
+        )
+
+    def assert_command_fails(self, command):
+        # Avoid cluttering stdout with argparse error messages
+        mock.patch('argparse.ArgumentParser._print_message').start()
+        with mock.patch.object(sys, 'argv', command), mock.patch.object(
+                cli, 'run_sanity_checks'):
+            self.assertRaises(SystemExit, cli.main)
+
+    def test_downgrade_fails(self):
+        self.assert_command_fails(['prog', 'downgrade', '--sql', 'juno'])
+
+    @mock.patch.object(cli, '_use_separate_migration_branches')
+    def test_upgrade_negative_relative_revision_fails(self, use_mock):
+        self.assert_command_fails(['prog', 'upgrade', '-2'])
+
+    @mock.patch.object(cli, '_use_separate_migration_branches')
+    def test_upgrade_negative_delta_fails(self, use_mock):
+        self.assert_command_fails(['prog', 'upgrade', '--delta', '-2'])
+
+    @mock.patch.object(cli, '_use_separate_migration_branches')
+    def test_upgrade_rejects_delta_with_relative_revision(self, use_mock):
+        self.assert_command_fails(['prog', 'upgrade', '+2', '--delta', '3'])
+
+    def _test_validate_head_file_helper(self, heads, file_heads=None,
+                                        branchless=False):
+        if file_heads is None:
+            file_heads = []
+        fake_config = self.configs[0]
+        mock_open = self.useFixture(
+            tools.OpenFixture(cli._get_head_file_path(fake_config),
+                              '\n'.join(file_heads))
+        ).mock_open
+        with mock.patch('alembic.script.ScriptDirectory.from_config') as fc,\
+                mock.patch.object(cli, '_use_separate_migration_branches',
+                                  return_value=not branchless):
+            fc.return_value.get_heads.return_value = heads
+
+            if not branchless or all(head in file_heads for head in heads):
+                cli.validate_head_file(fake_config)
+            else:
+                self.assertRaises(
+                    SystemExit,
+                    cli.validate_head_file,
+                    fake_config
+                )
+                self.assertTrue(self.mock_alembic_err.called)
+
+            if branchless:
+                mock_open.assert_called_with(
+                    cli._get_head_file_path(fake_config))
+                fc.assert_called_once_with(fake_config)
+            else:
+                self.assertFalse(mock_open.called)
+                self.assertFalse(fc.called)
+
+    def test_validate_head_file_multiple_heads(self):
+        self._test_validate_head_file_helper(['a', 'b'])
+
+    def test_validate_head_file_missing_file(self):
+        self._test_validate_head_file_helper(['a'])
+
+    def test_validate_head_file_wrong_contents(self):
+        self._test_validate_head_file_helper(['a'], ['b'])
+
+    def test_validate_head_file_success(self):
+        self._test_validate_head_file_helper(['a'], ['a'])
+
+    @mock.patch.object(cli, '_use_separate_migration_branches',
+                       return_value=False)
+    def test_validate_head_file_branchless_failure(self, *args):
+        self._test_validate_head_file_helper(['a'], ['b'], branchless=True)
+
+    @mock.patch.object(cli, '_use_separate_migration_branches',
+                       return_value=False)
+    def test_validate_head_file_branchless_success(self, *args):
+        self._test_validate_head_file_helper(['a'], ['a'], branchless=True)
+
+    def test_get_project_base(self):
+        config = alembic_config.Config()
+        config.set_main_option('script_location', 'a.b.c:d')
+        proj_base = cli._get_project_base(config)
+        self.assertEqual('a', proj_base)
+
+    def test_get_root_versions_dir(self):
+        config = alembic_config.Config()
+        config.set_main_option('script_location', 'a.b.c:d')
+        versions_dir = cli._get_root_versions_dir(config)
+        self.assertEqual('/fake/dir/a/a/b/c/d/versions', versions_dir)
+
+    def test_get_subproject_script_location(self):
+        foo_ep = cli._get_subproject_script_location('networking-foo')
+        expected = 'networking_foo.db.migration:alembic_migrations'
+        self.assertEqual(expected, foo_ep)
+
+    def test_get_subproject_script_location_not_installed(self):
+        self.assertRaises(
+            SystemExit, cli._get_subproject_script_location, 'not-installed')
+
+    def test_get_service_script_location(self):
+        fwaas_ep = cli._get_service_script_location('fwaas')
+        expected = 'neutron_fwaas.db.migration:alembic_migrations'
+        self.assertEqual(expected, fwaas_ep)
+
+    def test_get_service_script_location_not_installed(self):
+        self.assertRaises(
+            SystemExit, cli._get_service_script_location, 'myaas')
+
+    def test_get_subproject_base_not_installed(self):
+        self.assertRaises(
+            SystemExit, cli._get_subproject_base, 'not-installed')
+
+    def test__compare_labels_ok(self):
+        labels = {'label1', 'label2'}
+        fake_revision = FakeRevision(labels)
+        cli._compare_labels(fake_revision, {'label1', 'label2'})
+
+    def test__compare_labels_fail_unexpected_labels(self):
+        labels = {'label1', 'label2', 'label3'}
+        fake_revision = FakeRevision(labels)
+        self.assertRaises(
+            SystemExit,
+            cli._compare_labels, fake_revision, {'label1', 'label2'})
+
+    @mock.patch.object(cli, '_compare_labels')
+    def test__validate_single_revision_labels_branchless_fail_different_labels(
+        self, compare_mock):
+
+        fake_down_revision = FakeRevision()
+        fake_revision = FakeRevision(down_revision=fake_down_revision)
+
+        script_dir = mock.Mock()
+        script_dir.get_revision.return_value = fake_down_revision
+        cli._validate_single_revision_labels(script_dir, fake_revision,
+                                             label=None)
+
+        expected_labels = set()
+        compare_mock.assert_has_calls(
+            [mock.call(revision, expected_labels)
+             for revision in (fake_revision, fake_down_revision)]
+        )
+
+    @mock.patch.object(cli, '_compare_labels')
+    def test__validate_single_revision_labels_branches_fail_different_labels(
+        self, compare_mock):
+
+        fake_down_revision = FakeRevision()
+        fake_revision = FakeRevision(down_revision=fake_down_revision)
+
+        script_dir = mock.Mock()
+        script_dir.get_revision.return_value = fake_down_revision
+        cli._validate_single_revision_labels(
+            script_dir, fake_revision, label='fakebranch')
+
+        expected_labels = {'fakebranch'}
+        compare_mock.assert_has_calls(
+            [mock.call(revision, expected_labels)
+             for revision in (fake_revision, fake_down_revision)]
+        )
+
+    @mock.patch.object(cli, '_validate_single_revision_labels')
+    def test__validate_revision_validates_branches(self, validate_mock):
+        script_dir = mock.Mock()
+        fake_revision = FakeRevision()
+        branch = cli.MIGRATION_BRANCHES[0]
+        fake_revision.path = os.path.join('/fake/path', branch)
+        cli._validate_revision(script_dir, fake_revision)
+        validate_mock.assert_called_with(
+            script_dir, fake_revision, label=branch)
+
+    @mock.patch.object(cli, '_validate_single_revision_labels')
+    def test__validate_revision_validates_branchless_migrations(
+        self, validate_mock):
+
+        script_dir = mock.Mock()
+        fake_revision = FakeRevision()
+        cli._validate_revision(script_dir, fake_revision)
+        validate_mock.assert_called_with(script_dir, fake_revision)
+
+    @mock.patch.object(cli, '_validate_revision')
+    @mock.patch('alembic.script.ScriptDirectory.walk_revisions')
+    def test_validate_revisions_walks_thru_all_revisions(
+        self, walk_mock, validate_mock):
+
+        revisions = [FakeRevision() for i in range(10)]
+        walk_mock.return_value = revisions
+        cli.validate_revisions(self.configs[0])
+        validate_mock.assert_has_calls(
+            [mock.call(mock.ANY, revision) for revision in revisions]
+        )
+
+    @mock.patch.object(cli, '_validate_revision')
+    @mock.patch('alembic.script.ScriptDirectory.walk_revisions')
+    def test_validate_revisions_fails_on_multiple_branch_points(
+        self, walk_mock, validate_mock):
+
+        revisions = [FakeRevision(is_branch_point=True) for i in range(2)]
+        walk_mock.return_value = revisions
+        self.assertRaises(
+            SystemExit, cli.validate_revisions, self.configs[0])
+
+    @mock.patch('alembic.script.ScriptDirectory.walk_revisions')
+    def test__get_branch_points(self, walk_mock):
+        revisions = [FakeRevision(is_branch_point=tools.get_random_boolean)
+                     for i in range(50)]
+        walk_mock.return_value = revisions
+        script_dir = alembic_script.ScriptDirectory.from_config(
+            self.configs[0])
+        self.assertEqual(set(rev for rev in revisions if rev.is_branch_point),
+                         set(cli._get_branch_points(script_dir)))
+
+    @mock.patch.object(cli, '_use_separate_migration_branches')
+    @mock.patch.object(cli, '_get_version_branch_path')
+    def test_autogen_process_directives(
+            self,
+            get_version_branch_path,
+            use_separate_migration_branches):
+
+        use_separate_migration_branches.return_value = True
+        get_version_branch_path.side_effect = lambda cfg, release, branch: (
+            "/foo/expand" if branch == 'expand' else "/foo/contract")
+
+        migration_script = alembic_ops.MigrationScript(
+            'eced083f5df',
+            # these directives will be split into separate
+            # expand/contract scripts
+            alembic_ops.UpgradeOps(
+                ops=[
+                    alembic_ops.CreateTableOp(
+                        'organization',
+                        [
+                            sa.Column('id', sa.Integer(), primary_key=True),
+                            sa.Column('name', sa.String(50), nullable=False)
+                        ]
+                    ),
+                    alembic_ops.ModifyTableOps(
+                        'user',
+                        ops=[
+                            alembic_ops.AddColumnOp(
+                                'user',
+                                sa.Column('organization_id', sa.Integer())
+                            ),
+                            alembic_ops.CreateForeignKeyOp(
+                                'org_fk', 'user', 'organization',
+                                ['organization_id'], ['id']
+                            ),
+                            alembic_ops.DropConstraintOp(
+                                'user', 'uq_user_org'
+                            ),
+                            alembic_ops.DropColumnOp(
+                                'user', 'organization_name'
+                            )
+                        ]
+                    )
+                ]
+            ),
+            # these will be discarded
+            alembic_ops.DowngradeOps(
+                ops=[
+                    alembic_ops.AddColumnOp(
+                        'user', sa.Column(
+                            'organization_name', sa.String(50), nullable=True)
+                    ),
+                    alembic_ops.CreateUniqueConstraintOp(
+                        'uq_user_org', 'user',
+                        ['user_name', 'organization_name']
+                    ),
+                    alembic_ops.ModifyTableOps(
+                        'user',
+                        ops=[
+                            alembic_ops.DropConstraintOp('org_fk', 'user'),
+                            alembic_ops.DropColumnOp('user', 'organization_id')
+                        ]
+                    ),
+                    alembic_ops.DropTableOp('organization')
+                ]
+            ),
+            message='create the organization table and '
+            'replace user.organization_name'
+        )
+
+        directives = [migration_script]
+        autogen.process_revision_directives(
+            mock.Mock(), mock.Mock(), directives
+        )
+
+        expand = directives[0]
+        contract = directives[1]
+        self.assertEqual("/foo/expand", expand.version_path)
+        self.assertEqual("/foo/contract", contract.version_path)
+        self.assertTrue(expand.downgrade_ops.is_empty())
+        self.assertTrue(contract.downgrade_ops.is_empty())
+
+        self.assertEqual(
+            textwrap.dedent("""\
+            ### commands auto generated by Alembic - please adjust! ###
+                op.create_table('organization',
+                sa.Column('id', sa.Integer(), nullable=False),
+                sa.Column('name', sa.String(length=50), nullable=False),
+                sa.PrimaryKeyConstraint('id')
+                )
+                op.add_column('user', """
+                """sa.Column('organization_id', sa.Integer(), nullable=True))
+                op.create_foreign_key('org_fk', 'user', """
+                """'organization', ['organization_id'], ['id'])
+                ### end Alembic commands ###"""),
+            alembic_ag_api.render_python_code(expand.upgrade_ops)
+        )
+        self.assertEqual(
+            textwrap.dedent("""\
+            ### commands auto generated by Alembic - please adjust! ###
+                op.drop_constraint('user', 'uq_user_org', type_=None)
+                op.drop_column('user', 'organization_name')
+                ### end Alembic commands ###"""),
+            alembic_ag_api.render_python_code(contract.upgrade_ops)
+        )
+
+    @mock.patch.object(cli, '_get_branch_points', return_value=[])
+    @mock.patch.object(cli.CONF, 'split_branches',
+                       new_callable=mock.PropertyMock,
+                       return_value=True, create=True)
+    def test__use_separate_migration_branches_enforced(self, *mocks):
+        self.assertTrue(cli._use_separate_migration_branches(self.configs[0]))
+
+    @mock.patch.object(cli, '_get_branch_points', return_value=[])
+    def test__use_separate_migration_branches_no_branch_points(self, *mocks):
+        self.assertFalse(cli._use_separate_migration_branches(self.configs[0]))
+
+    @mock.patch.object(cli, '_get_branch_points', return_value=['fake1'])
+    def test__use_separate_migration_branches_with_branch_points(self, *mocks):
+        self.assertTrue(cli._use_separate_migration_branches(self.configs[0]))
+
+    @mock.patch('alembic.script.ScriptDirectory.walk_revisions')
+    def test__find_milestone_revisions_one_branch(self, walk_mock):
+        c_revs = [FakeRevision(labels={cli.CONTRACT_BRANCH}) for r in range(5)]
+        c_revs[1].module.neutron_milestone = [migration.LIBERTY]
+
+        walk_mock.return_value = c_revs
+        m = cli._find_milestone_revisions(self.configs[0], 'liberty',
+                                          cli.CONTRACT_BRANCH)
+        self.assertEqual(1, len(m))
+        m = cli._find_milestone_revisions(self.configs[0], 'liberty',
+                                          cli.EXPAND_BRANCH)
+        self.assertEqual(0, len(m))
+
+    @mock.patch('alembic.script.ScriptDirectory.walk_revisions')
+    def test__find_milestone_revisions_two_branches(self, walk_mock):
+        c_revs = [FakeRevision(labels={cli.CONTRACT_BRANCH}) for r in range(5)]
+        c_revs[1].module.neutron_milestone = [migration.LIBERTY]
+        e_revs = [FakeRevision(labels={cli.EXPAND_BRANCH}) for r in range(5)]
+        e_revs[3].module.neutron_milestone = [migration.LIBERTY]
+
+        walk_mock.return_value = c_revs + e_revs
+        m = cli._find_milestone_revisions(self.configs[0], 'liberty')
+        self.assertEqual(2, len(m))
+
+        m = cli._find_milestone_revisions(self.configs[0], 'mitaka')
+        self.assertEqual(0, len(m))
+
+    @mock.patch('alembic.script.ScriptDirectory.walk_revisions')
+    def test__find_milestone_revisions_branchless(self, walk_mock):
+        revisions = [FakeRevision() for r in range(5)]
+        revisions[2].module.neutron_milestone = [migration.LIBERTY]
+
+        walk_mock.return_value = revisions
+        m = cli._find_milestone_revisions(self.configs[0], 'liberty')
+        self.assertEqual(1, len(m))
+
+        m = cli._find_milestone_revisions(self.configs[0], 'mitaka')
+        self.assertEqual(0, len(m))
 
 
-class TestModelsMigrationsMysql(_TestModelsMigrations,
-                                test_base.MySQLOpportunisticTestCase):
-    scenarios = _scenarios
+class TestSafetyChecks(base.BaseTestCase):
 
-
-class TestModelsMigrationsPsql(_TestModelsMigrations,
-                               test_base.PostgreSQLOpportunisticTestCase):
-    scenarios = _scenarios
+    def test_validate_revisions(self, *mocks):
+        cli.validate_revisions(cli.get_neutron_config())

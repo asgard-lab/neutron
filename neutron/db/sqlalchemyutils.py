@@ -13,12 +13,12 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
+from oslo_log import log as logging
 from six import moves
 import sqlalchemy
 from sqlalchemy.orm import properties
 
 from neutron.common import exceptions as n_exc
-from neutron.openstack.common import log as logging
 
 
 LOG = logging.getLogger(__name__)
@@ -88,7 +88,7 @@ def paginate_query(query, model, limit, sorts, marker_obj=None):
         criteria_list = []
         for i, sort in enumerate(sorts):
             crit_attrs = [(getattr(model, sorts[j][0]) == marker_values[j])
-                          for j in moves.xrange(i)]
+                          for j in moves.range(i)]
             model_attr = getattr(model, sort[0])
             if sort[1]:
                 crit_attrs.append((model_attr > marker_values[i]))

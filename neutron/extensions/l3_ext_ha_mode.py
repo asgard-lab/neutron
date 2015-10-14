@@ -30,7 +30,7 @@ EXTENDED_ATTRIBUTES_2_0 = {
 
 
 class DistributedHARouterNotSupported(NotImplementedError):
-    message = _("Currenly distributed HA routers are "
+    message = _("Currently distributed HA routers are "
                 "not supported.")
 
 
@@ -55,6 +55,12 @@ class HANotEnoughAvailableAgents(exceptions.NeutronException):
                 "required %(min_agents)s, available %(num_agents)s.")
 
 
+class HAMaximumAgentsNumberNotValid(exceptions.NeutronException):
+    message = _("max_l3_agents_per_router %(max_agents)s config parameter "
+                "is not valid. It has to be greater than or equal to "
+                "min_l3_agents_per_router %(min_agents)s.")
+
+
 class HAMinimumAgentsNumberNotValid(exceptions.NeutronException):
     message = (_("min_l3_agents_per_router config parameter is not valid. "
                  "It has to be equal to or more than %s for HA.") %
@@ -75,10 +81,6 @@ class L3_ext_ha_mode(extensions.ExtensionDescriptor):
     @classmethod
     def get_description(cls):
         return "Add HA capability to routers."
-
-    @classmethod
-    def get_namespace(cls):
-        return ""
 
     @classmethod
     def get_updated(cls):

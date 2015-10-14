@@ -17,17 +17,17 @@ import webob.exc
 
 from neutron.api import extensions
 from neutron.api.v2 import attributes as attr
-from neutron.common import exceptions as qexception
+from neutron.common import exceptions as nexception
 from neutron.extensions import providernet as pnet
 
 SEGMENTS = 'segments'
 
 
-class SegmentsSetInConjunctionWithProviders(qexception.InvalidInput):
+class SegmentsSetInConjunctionWithProviders(nexception.InvalidInput):
     message = _("Segments and provider values cannot both be set.")
 
 
-class SegmentsContainDuplicateEntry(qexception.InvalidInput):
+class SegmentsContainDuplicateEntry(nexception.InvalidInput):
     message = _("Duplicate segment entry in request.")
 
 
@@ -106,10 +106,6 @@ class Multiprovidernet(extensions.ExtensionDescriptor):
     def get_description(cls):
         return ("Expose mapping of virtual networks to multiple physical "
                 "networks")
-
-    @classmethod
-    def get_namespace(cls):
-        return "http://docs.openstack.org/ext/multi-provider/api/v1.0"
 
     @classmethod
     def get_updated(cls):

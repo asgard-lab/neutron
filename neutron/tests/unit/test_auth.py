@@ -13,10 +13,10 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
+from oslo_middleware import request_id
 import webob
 
 from neutron import auth
-from neutron.openstack.common.middleware import request_id
 from neutron.tests import base
 
 
@@ -74,7 +74,7 @@ class NeutronKeystoneContextTestCase(base.BaseTestCase):
         self.assertEqual(response.status, '200 OK')
         self.assertEqual(self.context.roles, ['role1', 'role2', 'role3',
                                               'role4', 'role5', 'AdMiN'])
-        self.assertEqual(self.context.is_admin, True)
+        self.assertTrue(self.context.is_admin)
 
     def test_with_user_tenant_name(self):
         self.request.headers['X_PROJECT_ID'] = 'testtenantid'

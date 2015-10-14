@@ -15,10 +15,11 @@
 
 import os
 
-from oslo.config import cfg
+from oslo_config import cfg
+from oslo_config import types
+from oslo_log import log as logging
 
 from neutron.common import config
-from neutron.openstack.common import log as logging
 
 
 LOG = logging.getLogger(__name__)
@@ -27,6 +28,16 @@ LOG = logging.getLogger(__name__)
 ROOT_HELPER_OPTS = [
     cfg.StrOpt('root_helper', default='sudo',
                help=_('Root helper application.')),
+    cfg.BoolOpt('use_helper_for_ns_read',
+                default=True,
+                help=_('Use the root helper to read the namespaces from '
+                       'the operating system.')),
+    # We can't just use root_helper=sudo neutron-rootwrap-daemon $cfg because
+    # it isn't appropriate for long-lived processes spawned with create_process
+    # Having a bool use_rootwrap_daemon option precludes specifying the
+    # rootwrap daemon command, which may be necessary for Xen?
+    cfg.StrOpt('root_helper_daemon',
+               help=_('Root helper daemon application to use when possible.')),
 ]
 
 AGENT_STATE_OPTS = [
@@ -34,6 +45,8 @@ AGENT_STATE_OPTS = [
                  help=_('Seconds between nodes reporting state to server; '
                         'should be less than agent_down_time, best if it '
                         'is half or less than agent_down_time.')),
+    cfg.BoolOpt('log_agent_heartbeats', default=False,
+                help=_('Log agent heartbeats')),
 ]
 
 INTERFACE_DRIVER_OPTS = [
@@ -43,7 +56,9 @@ INTERFACE_DRIVER_OPTS = [
 
 USE_NAMESPACES_OPTS = [
     cfg.BoolOpt('use_namespaces', default=True,
-                help=_("Allow overlapping IP.")),
+                help=_("Allow overlapping IP. This option is deprecated and "
+                       "will be removed in a future release."),
+                deprecated_for_removal=True),
 ]
 
 IPTABLES_OPTS = [
@@ -51,8 +66,48 @@ IPTABLES_OPTS = [
                 help=_("Add comments to iptables rules.")),
 ]
 
+PROCESS_MONITOR_OPTS = [
+    cfg.StrOpt('check_child_processes_action', default='respawn',
+               choices=['respawn', 'exit'],
+               help=_('Action to be executed when a child process dies')),
+    cfg.IntOpt('check_child_processes_interval', default=60,
+               help=_('Interval between checks of child process liveness '
+                      '(seconds), use 0 to disable')),
+]
 
-def get_log_args(conf, log_file_name):
+
+# TODO(hichihara): Remove these two classes, once oslo fixes types.string
+# and cfg.StrOpt.
+class LengthString(types.String):
+    def __init__(self, maxlen=None):
+        super(LengthString, self).__init__()
+        self.maxlen = maxlen
+
+    def __call__(self, value):
+        value = super(LengthString, self).__call__(value)
+        if self.maxlen and len(value) > self.maxlen:
+            raise ValueError(_("String value '%(value)s' exceeds max length "
+                               "%(len)d") % {'value': value,
+                                             'len': self.maxlen})
+        return value
+
+
+class LengthStrOpt(cfg.Opt):
+    def __init__(self, name, maxlen=None, **kwargs):
+        super(LengthStrOpt, self).__init__(name,
+                                           type=LengthString(maxlen=maxlen),
+                                           **kwargs)
+
+
+AVAILABILITY_ZONE_OPTS = [
+    # The default AZ name "nova" is selected to match the default
+    # AZ name in Nova and Cinder.
+    LengthStrOpt('availability_zone', maxlen=255, default='nova',
+                 help=_("Availability zone of this node")),
+]
+
+
+def get_log_args(conf, log_file_name, **kwargs):
     cmd_args = []
     if conf.debug:
         cmd_args.append('--debug')
@@ -70,6 +125,8 @@ def get_log_args(conf, log_file_name):
             log_dir = os.path.dirname(conf.log_file)
         if log_dir:
             cmd_args.append('--log-dir=%s' % log_dir)
+        if kwargs.get('metadata_proxy_watch_log') is False:
+            cmd_args.append('--nometadata_proxy_watch_log')
     else:
         if conf.use_syslog:
             cmd_args.append('--use-syslog')
@@ -80,8 +137,6 @@ def get_log_args(conf, log_file_name):
 
 
 def register_root_helper(conf):
-    # The first call is to ensure backward compatibility
-    conf.register_opts(ROOT_HELPER_OPTS)
     conf.register_opts(ROOT_HELPER_OPTS, 'AGENT')
 
 
@@ -101,18 +156,16 @@ def register_iptables_opts(conf):
     conf.register_opts(IPTABLES_OPTS, 'AGENT')
 
 
+def register_process_monitor_opts(conf):
+    conf.register_opts(PROCESS_MONITOR_OPTS, 'AGENT')
+
+
+def register_availability_zone_opts_helper(conf):
+    conf.register_opts(AVAILABILITY_ZONE_OPTS, 'AGENT')
+
+
 def get_root_helper(conf):
-    root_helper = conf.AGENT.root_helper
-    if root_helper != 'sudo':
-        return root_helper
-
-    root_helper = conf.root_helper
-    if root_helper != 'sudo':
-        LOG.deprecated(_('DEFAULT.root_helper is deprecated! Please move '
-                         'root_helper configuration to [AGENT] section.'))
-        return root_helper
-
-    return 'sudo'
+    return conf.AGENT.root_helper
 
 
 def setup_conf():

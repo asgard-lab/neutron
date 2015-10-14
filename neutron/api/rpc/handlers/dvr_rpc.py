@@ -13,57 +13,72 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
-from neutron.common import log
+from oslo_log import helpers as log_helpers
+from oslo_log import log as logging
+import oslo_messaging
+
+from neutron.common import constants
 from neutron.common import rpc as n_rpc
 from neutron.common import topics
 from neutron import manager
-from neutron.openstack.common import log as logging
 
 LOG = logging.getLogger(__name__)
 
 
-class DVRServerRpcApiMixin(object):
-    """Agent-side RPC (stub) for agent-to-plugin interaction."""
+class DVRServerRpcApi(object):
+    """Agent-side RPC (stub) for agent-to-plugin interaction.
 
-    DVR_RPC_VERSION = "1.0"
+    This class implements the client side of an rpc interface.  The server side
+    can be found below: DVRServerRpcCallback.  For more information on changing
+    rpc interfaces, see doc/source/devref/rpc_api.rst.
+    """
+    # 1.0 Initial Version
+    # 1.1 Support for passing 'fixed_ips' in get_subnet_for_dvr function.
+    #     Passing 'subnet" will be deprecated in the next release.
 
-    @log.log
+    def __init__(self, topic):
+        target = oslo_messaging.Target(topic=topic, version='1.0',
+                                       namespace=constants.RPC_NAMESPACE_DVR)
+        self.client = n_rpc.get_client(target)
+
+    @log_helpers.log_method_call
     def get_dvr_mac_address_by_host(self, context, host):
-        return self.call(context,
-                         self.make_msg('get_dvr_mac_address_by_host',
-                                       host=host),
-                         version=self.DVR_RPC_VERSION)
+        cctxt = self.client.prepare()
+        return cctxt.call(context, 'get_dvr_mac_address_by_host', host=host)
 
-    @log.log
+    @log_helpers.log_method_call
     def get_dvr_mac_address_list(self, context):
-        return self.call(context,
-                         self.make_msg('get_dvr_mac_address_list'),
-                         version=self.DVR_RPC_VERSION)
+        cctxt = self.client.prepare()
+        return cctxt.call(context, 'get_dvr_mac_address_list')
 
-    @log.log
+    @log_helpers.log_method_call
     def get_ports_on_host_by_subnet(self, context, host, subnet):
-        return self.call(context,
-                         self.make_msg(
-                             'get_ports_on_host_by_subnet',
-                             host=host,
-                             subnet=subnet),
-                         version=self.DVR_RPC_VERSION)
+        cctxt = self.client.prepare()
+        return cctxt.call(context, 'get_ports_on_host_by_subnet',
+                          host=host, subnet=subnet)
 
-    @log.log
-    def get_subnet_for_dvr(self, context, subnet):
-        return self.call(context,
-                         self.make_msg('get_subnet_for_dvr',
-                                       subnet=subnet),
-                         version=self.DVR_RPC_VERSION)
+    @log_helpers.log_method_call
+    def get_subnet_for_dvr(self, context, subnet, fixed_ips):
+        cctxt = self.client.prepare()
+        return cctxt.call(
+            context, 'get_subnet_for_dvr', subnet=subnet, fixed_ips=fixed_ips)
 
 
-class DVRServerRpcCallback(n_rpc.RpcCallback):
-    """Plugin-side RPC (implementation) for agent-to-plugin interaction."""
+class DVRServerRpcCallback(object):
+    """Plugin-side RPC (implementation) for agent-to-plugin interaction.
+
+    This class implements the server side of an rpc interface.  The client side
+    can be found above: DVRServerRpcApi.  For more information on changing rpc
+    interfaces, see doc/source/devref/rpc_api.rst.
+    """
 
     # History
     #   1.0 Initial version
+    #   1.1 Support for passing the 'fixed_ips" in get_subnet_for_dvr.
+    #       Passing subnet will be deprecated in the next release.
 
-    RPC_API_VERSION = "1.0"
+    target = oslo_messaging.Target(version='1.1',
+                                   namespace=constants.RPC_NAMESPACE_DVR)
 
     @property
     def plugin(self):
@@ -87,8 +102,10 @@ class DVRServerRpcCallback(n_rpc.RpcCallback):
             host, subnet)
 
     def get_subnet_for_dvr(self, context, **kwargs):
+        fixed_ips = kwargs.get('fixed_ips')
         subnet = kwargs.get('subnet')
-        return self.plugin.get_subnet_for_dvr(context, subnet)
+        return self.plugin.get_subnet_for_dvr(
+            context, subnet, fixed_ips=fixed_ips)
 
 
 class DVRAgentRpcApiMixin(object):
@@ -105,11 +122,9 @@ class DVRAgentRpcApiMixin(object):
         """Notify dvr mac address updates."""
         if not dvr_macs:
             return
-        self.fanout_cast(context,
-                         self.make_msg('dvr_mac_address_update',
-                                       dvr_macs=dvr_macs),
-                         version=self.DVR_RPC_VERSION,
-                         topic=self._get_dvr_update_topic())
+        cctxt = self.client.prepare(topic=self._get_dvr_update_topic(),
+                                    version=self.DVR_RPC_VERSION, fanout=True)
+        cctxt.cast(context, 'dvr_mac_address_update', dvr_macs=dvr_macs)
 
 
 class DVRAgentRpcCallbackMixin(object):

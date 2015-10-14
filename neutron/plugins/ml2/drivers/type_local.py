@@ -13,8 +13,11 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
+from oslo_log import log
+import six
+
 from neutron.common import exceptions as exc
-from neutron.openstack.common import log
+from neutron.i18n import _LI
 from neutron.plugins.common import constants as p_const
 from neutron.plugins.ml2 import driver_api as api
 
@@ -32,7 +35,7 @@ class LocalTypeDriver(api.TypeDriver):
     """
 
     def __init__(self):
-        LOG.info(_("ML2 LocalTypeDriver initialization complete"))
+        LOG.info(_LI("ML2 LocalTypeDriver initialization complete"))
 
     def get_type(self):
         return p_const.TYPE_LOCAL
@@ -44,7 +47,7 @@ class LocalTypeDriver(api.TypeDriver):
         return False
 
     def validate_provider_segment(self, segment):
-        for key, value in segment.iteritems():
+        for key, value in six.iteritems(segment):
             if value and key != api.NETWORK_TYPE:
                 msg = _("%s prohibited for local provider network") % key
                 raise exc.InvalidInput(error_message=msg)
@@ -59,4 +62,7 @@ class LocalTypeDriver(api.TypeDriver):
 
     def release_segment(self, session, segment):
         # No resources to release
+        pass
+
+    def get_mtu(self, physical_network=None):
         pass
